@@ -1,0 +1,619 @@
+from dotenv import load_dotenv
+from pathlib import Path
+import os
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+import logging
+import uuid
+import hashlib
+import re
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Literal
+
+import jwt
+import bcrypt
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form
+from fastapi.responses import FileResponse
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, field_validator
+
+# ---------------------------------------------------------------------------
+# Config & DB
+# ---------------------------------------------------------------------------
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+MOCK_MODE = os.environ.get('MOCK_MODE', 'true').lower() == 'true'
+JWT_SECRET = os.environ['JWT_SECRET']
+JWT_ALGORITHM = "HS256"
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+
+UPLOAD_DIR = ROOT_DIR / 'uploads'
+UPLOAD_DIR.mkdir(exist_ok=True)
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("lendsprint")
+
+app = FastAPI(title="LendSprint AI")
+api_router = APIRouter(prefix="/api")
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def create_access_token(user_id: str, email: str) -> str:
+    payload = {"sub": user_id, "email": email,
+               "exp": now_utc() + timedelta(hours=12), "type": "access"}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(request: Request) -> dict:
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    if not token:
+        token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+LoanType = Literal["business", "personal", "MSME"]
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class ApplicationCreate(BaseModel):
+    borrower_name: str = Field(..., min_length=2, max_length=140)
+    loan_type: LoanType
+    loan_amount: float = Field(..., gt=0)
+
+    @field_validator("borrower_name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Borrower name is required")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Decision engine (mock)
+# ---------------------------------------------------------------------------
+LOAN_TYPE_LABEL = {"business": "Business", "personal": "Personal", "MSME": "MSME"}
+
+# Deterministic profiles for the seeded demo borrowers.
+KNOWN_PROFILES = {
+    "arvind engineering pvt ltd": {"pd": 0.182, "decision": "approve",
+                                    "income": 1280000, "obligations": 435000, "tat": 14},
+    "sri lakshmi components": {"pd": 0.31, "decision": "review",
+                               "income": 940000, "obligations": 520000, "tat": 21},
+    "bluepeak traders": {"pd": 0.214, "decision": "approve",
+                         "income": 610000, "obligations": 205000, "tat": 17},
+}
+
+REASON_BANK = {
+    "STRONG_CF": ("Strong operating cash flow", 0.22, "positive"),
+    "GOOD_COVERAGE": ("Healthy obligation coverage", 0.17, "positive"),
+    "STABLE_BANKING": ("Stable banking behaviour", 0.12, "positive"),
+    "MODERATE_CF": ("Moderate cash-flow buffer", 0.08, "positive"),
+    "HIGH_UTIL": ("High recent credit utilisation", -0.18, "negative"),
+    "REPAY_IRREG": ("Recent repayment irregularity", -0.13, "negative"),
+    "SEASONAL_CF": ("Seasonal revenue concentration", -0.09, "negative"),
+    "WEAK_CF": ("Weak operating cash flow", -0.24, "negative"),
+    "HIGH_LEVERAGE": ("Elevated leverage profile", -0.20, "negative"),
+    "NEG_TREND": ("Declining balance trend", -0.15, "negative"),
+}
+
+
+def _reason(code: str) -> dict:
+    label, weight, direction = REASON_BANK[code]
+    return {"code": code, "label": label, "weight": weight, "direction": direction}
+
+
+def _seed_int(borrower: str, amount: float) -> int:
+    return int(hashlib.md5(f"{borrower.lower()}|{int(amount)}".encode()).hexdigest(), 16)
+
+
+def compute_decision(borrower_name: str, loan_type: str, loan_amount: float) -> dict:
+    """Deterministic mock credit decision. Same input -> same output."""
+    key = borrower_name.strip().lower()
+    seed = _seed_int(borrower_name, loan_amount)
+
+    if key in KNOWN_PROFILES:
+        p = KNOWN_PROFILES[key]
+        pd_score, decision = p["pd"], p["decision"]
+        income, obligations, tat = p["income"], p["obligations"], p["tat"]
+    else:
+        pd_score = round(0.10 + (seed % 46) / 100.0, 3)  # 0.10 - 0.55
+        decision = "approve" if pd_score < 0.25 else ("review" if pd_score < 0.42 else "reject")
+        income = int(round(loan_amount * (0.34 + (seed % 8) / 100.0)))
+        obligations = int(round(income * (0.30 + (seed % 15) / 100.0)))
+        tat = 12 + (seed % 12)
+
+    net = income - obligations
+
+    if decision == "approve":
+        codes = ["STRONG_CF", "GOOD_COVERAGE", "STABLE_BANKING"]
+    elif decision == "review":
+        codes = ["HIGH_UTIL", "REPAY_IRREG", "MODERATE_CF"]
+    else:
+        codes = ["WEAK_CF", "HIGH_LEVERAGE", "NEG_TREND"]
+    reason_codes = [_reason(c) for c in codes]
+
+    cash_flow_summary = {
+        "income": income,
+        "obligations": obligations,
+        "net": net,
+        "coverage": round(net / obligations, 2) if obligations else 0,
+    }
+    return {
+        "pd_score": pd_score,
+        "decision": decision,
+        "reason_codes": reason_codes,
+        "cash_flow_summary": cash_flow_summary,
+        "tat_minutes": tat,
+        "model_version": "mock-v1.0",
+    }
+
+
+def lakh(v: float) -> str:
+    return f"{v / 100000:.2f}"
+
+
+def build_memo_text(borrower: str, loan_type: str, loan_amount: float, result: dict) -> str:
+    cf = result["cash_flow_summary"]
+    decision = result["decision"].upper()
+    pd_pct = result["pd_score"] * 100
+    positives = [r["label"].lower() for r in result["reason_codes"] if r["direction"] == "positive"]
+    negatives = [r["label"].lower() for r in result["reason_codes"] if r["direction"] == "negative"]
+    lt = LOAN_TYPE_LABEL.get(loan_type, loan_type)
+
+    tone = "stable operating cash generation" if result["decision"] == "approve" else (
+        "variable operating cash generation that warrants closer review"
+        if result["decision"] == "review" else "constrained operating cash generation")
+
+    para1 = (f"{borrower} has been assessed for a {lt} facility of ₹{lakh(loan_amount)} lakh. "
+             f"The available financial information indicates {tone} with estimated monthly income of "
+             f"₹{lakh(cf['income'])} lakh and obligations of ₹{lakh(cf['obligations'])} lakh, resulting in "
+             f"net monthly cash flow of approximately ₹{lakh(cf['net'])} lakh. The application reflects an "
+             f"obligation coverage of {cf['coverage']}x based on the documents available for this demonstration.")
+
+    if positives and negatives:
+        para2 = (f"The model-generated probability of default is {pd_pct:.1f}%. Positive signals include "
+                 f"{', '.join(positives)}. Offsetting risk signals include {', '.join(negatives)}, which "
+                 f"should be validated by the analyst before final disposition.")
+    elif positives:
+        para2 = (f"The model-generated probability of default is {pd_pct:.1f}%. Positive decision signals include "
+                 f"{', '.join(positives)}. No material adverse signal has been identified within the mock assessment.")
+    else:
+        para2 = (f"The model-generated probability of default is {pd_pct:.1f}%. Adverse signals include "
+                 f"{', '.join(negatives)}, which materially weigh on the recommendation.")
+
+    para3 = (f"Based on the configured demonstration decision policy, the application is classified as {decision}. "
+             f"This memo is an AI-generated draft intended to support analyst review and should not be treated as a "
+             f"final credit sanction.")
+    return f"{para1}\n\n{para2}\n\n{para3}"
+
+
+async def generate_ai_memo(borrower: str, loan_type: str, loan_amount: float, result: dict) -> str:
+    """Real LLM memo generation. Only invoked when MOCK_MODE is false. Falls back to template."""
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        cf = result["cash_flow_summary"]
+        prompt = (
+            f"Write a concise ~150 word internal credit memo for an Indian NBFC.\n"
+            f"Borrower: {borrower}\nLoan type: {LOAN_TYPE_LABEL.get(loan_type, loan_type)}\n"
+            f"Requested amount (INR): {loan_amount}\nDecision: {result['decision'].upper()}\n"
+            f"PD score: {result['pd_score']}\nMonthly income (INR): {cf['income']}\n"
+            f"Monthly obligations (INR): {cf['obligations']}\nNet cash flow (INR): {cf['net']}\n"
+            f"Reason codes: {[r['label'] for r in result['reason_codes']]}\n"
+            f"Use INR lakh formatting. Do not overclaim certainty. End by noting it is an AI-generated draft "
+            f"subject to credit policy and analyst review."
+        )
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"memo-{borrower}",
+            system_message="You are a senior credit analyst at an Indian NBFC writing professional, restrained credit memos.",
+        ).with_model("openai", "gpt-5.4")
+        resp = await chat.send_message(UserMessage(text=prompt))
+        text = resp if isinstance(resp, str) else str(resp)
+        return text.strip() or build_memo_text(borrower, loan_type, loan_amount, result)
+    except Exception as e:
+        logger.warning(f"AI memo generation failed, using template: {e}")
+        return build_memo_text(borrower, loan_type, loan_amount, result)
+
+
+# ---------------------------------------------------------------------------
+# Reference generation
+# ---------------------------------------------------------------------------
+async def next_reference() -> str:
+    year = now_utc().year
+    count = await db.applications.count_documents({})
+    return f"LS-{year}-{str(124 + count).zfill(5)}"
+
+
+async def write_audit(application_id: str, event: str, actor: str, payload: dict):
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()),
+        "application_id": application_id,
+        "event": event,
+        "actor": actor,
+        "payload": payload,
+        "created_at": iso(now_utc()),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
+@api_router.post("/auth/login")
+async def login(body: LoginIn):
+    email = body.email.strip().lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(user["id"], user["email"])
+    return {"token": token, "user": {"id": user["id"], "email": user["email"], "name": user.get("name", "Analyst")}}
+
+
+@api_router.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Application routes
+# ---------------------------------------------------------------------------
+@api_router.post("/applications", status_code=201)
+async def create_application(body: ApplicationCreate, user: dict = Depends(get_current_user)):
+    app_id = str(uuid.uuid4())
+    reference = await next_reference()
+    doc = {
+        "id": app_id,
+        "reference": reference,
+        "borrower_name": body.borrower_name,
+        "loan_type": body.loan_type,
+        "loan_amount": body.loan_amount,
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    }
+    await db.applications.insert_one(doc)
+    await write_audit(app_id, "Application Created", user.get("name", "Analyst"),
+                      {"reference": reference, "loan_type": body.loan_type, "loan_amount": body.loan_amount})
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/applications")
+async def list_applications(search: Optional[str] = None, status: Optional[str] = None,
+                            loan_type: Optional[str] = None, user: dict = Depends(get_current_user)):
+    query: dict = {}
+    if status and status != "all":
+        query["status"] = status
+    if loan_type and loan_type != "all":
+        query["loan_type"] = loan_type
+    if search:
+        query["$or"] = [
+            {"borrower_name": {"$regex": re.escape(search), "$options": "i"}},
+            {"reference": {"$regex": re.escape(search), "$options": "i"}},
+        ]
+    apps = await db.applications.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # attach decision summary
+    decisions = await db.decisions.find({}, {"_id": 0}).to_list(1000)
+    dmap = {d["application_id"]: d for d in decisions}
+    for a in apps:
+        d = dmap.get(a["id"])
+        a["decision"] = d["decision"] if d else None
+        a["pd_score"] = d["pd_score"] if d else None
+        a["tat_minutes"] = d["tat_minutes"] if d else None
+    return apps
+
+
+@api_router.get("/dashboard/stats")
+async def dashboard_stats(user: dict = Depends(get_current_user)):
+    total = await db.applications.count_documents({})
+    decided = await db.applications.count_documents({"status": "decided"})
+    pending = await db.applications.count_documents({"status": "pending"})
+    decisions = await db.decisions.find({}, {"_id": 0}).to_list(1000)
+    review_count = sum(1 for d in decisions if d["decision"] == "review")
+    auto = sum(1 for d in decisions if d["decision"] in ("approve", "reject"))
+    straight_through = round((auto / decided) * 100, 1) if decided else 0.0
+    avg_tat = round(sum(d["tat_minutes"] for d in decisions) / len(decisions)) if decisions else 0
+    return {
+        "total_applications": total,
+        "straight_through_rate": straight_through,
+        "avg_tat": avg_tat,
+        "pending_review": pending + review_count,
+    }
+
+
+@api_router.get("/applications/{app_id}")
+async def get_application(app_id: str, user: dict = Depends(get_current_user)):
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    documents = await db.documents.find({"application_id": app_id}, {"_id": 0}).sort("uploaded_at", 1).to_list(100)
+    decision = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
+    return {"application": application, "documents": documents, "decision": decision}
+
+
+@api_router.get("/applications/{app_id}/audit")
+async def get_audit(app_id: str, user: dict = Depends(get_current_user)):
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    events = await db.audit_log.find({"application_id": app_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return events
+
+
+DOC_TYPE_LABELS = {"bank_statement": "Bank Statement", "itr": "ITR", "gst": "GST", "salary_slip": "Salary Slip"}
+
+
+@api_router.post("/applications/{app_id}/documents", status_code=201)
+async def upload_documents(app_id: str, files: List[UploadFile] = File(...),
+                           doc_types: List[str] = Form(...), user: dict = Depends(get_current_user)):
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if len(files) != len(doc_types):
+        raise HTTPException(status_code=400, detail="Mismatch between files and document types")
+
+    saved = []
+    for f, dtype in zip(files, doc_types):
+        if dtype not in DOC_TYPE_LABELS:
+            raise HTTPException(status_code=400, detail=f"Invalid document type: {dtype}")
+        content = await f.read()
+        if not (f.content_type == "application/pdf" or (f.filename or "").lower().endswith(".pdf")):
+            raise HTTPException(status_code=400, detail=f"Only PDF files are allowed: {f.filename}")
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"File too large: {f.filename}")
+
+        doc_id = str(uuid.uuid4())
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(f.filename or "document.pdf"))
+        stored_name = f"{doc_id}_{safe_name}"
+        file_path = UPLOAD_DIR / stored_name
+        with open(file_path, "wb") as out:
+            out.write(content)
+
+        doc = {
+            "id": doc_id,
+            "application_id": app_id,
+            "doc_type": dtype,
+            "filename": safe_name,
+            "file_path": str(file_path),
+            "file_size": len(content),
+            "status": "processed",
+            "uploaded_at": iso(now_utc()),
+        }
+        await db.documents.insert_one(doc)
+        doc.pop("_id", None)
+        doc.pop("file_path", None)
+        saved.append(doc)
+
+    await write_audit(app_id, "Documents Uploaded", user.get("name", "Analyst"),
+                      {"count": len(saved), "types": [s["doc_type"] for s in saved]})
+    return saved
+
+
+@api_router.get("/documents/{doc_id}/download")
+async def download_document(doc_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.documents.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    path = doc.get("file_path")
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File not available in demo storage")
+    return FileResponse(path, media_type="application/pdf", filename=doc["filename"])
+
+
+@api_router.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.documents.find_one({"id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    path = doc.get("file_path")
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    await db.documents.delete_one({"id": doc_id})
+    return {"ok": True}
+
+
+@api_router.post("/applications/{app_id}/decision")
+async def run_decision(app_id: str, user: dict = Depends(get_current_user)):
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    documents = await db.documents.find({"application_id": app_id}, {"_id": 0}).to_list(100)
+    if not documents:
+        raise HTTPException(status_code=400, detail="Upload at least one document before running the decision")
+
+    result = compute_decision(application["borrower_name"], application["loan_type"], application["loan_amount"])
+
+    if MOCK_MODE:
+        memo_text = build_memo_text(application["borrower_name"], application["loan_type"],
+                                    application["loan_amount"], result)
+    else:
+        memo_text = await generate_ai_memo(application["borrower_name"], application["loan_type"],
+                                           application["loan_amount"], result)
+
+    created = iso(now_utc())
+    decision_doc = {
+        "id": str(uuid.uuid4()),
+        "application_id": app_id,
+        "pd_score": result["pd_score"],
+        "decision": result["decision"],
+        "reason_codes": result["reason_codes"],
+        "cash_flow_summary": result["cash_flow_summary"],
+        "memo_text": memo_text,
+        "model_version": result["model_version"],
+        "tat_minutes": result["tat_minutes"],
+        "created_at": created,
+    }
+    await db.decisions.replace_one({"application_id": app_id}, decision_doc, upsert=True)
+    await db.applications.update_one({"id": app_id}, {"$set": {"status": "decided"}})
+
+    await write_audit(app_id, "Decision Generated", "Decision Engine",
+                      {"model_version": result["model_version"], "pd_score": result["pd_score"],
+                       "decision": result["decision"]})
+    await write_audit(app_id, "Credit Memo Generated", "Decision Engine",
+                      {"model_version": result["model_version"], "words": len(memo_text.split())})
+
+    decision_doc.pop("_id", None)
+    return decision_doc
+
+
+# ---------------------------------------------------------------------------
+# Demo seed
+# ---------------------------------------------------------------------------
+SEED_APPS = [
+    {"reference": "LS-2026-00124", "borrower_name": "Arvind Engineering Pvt Ltd", "loan_type": "MSME",
+     "loan_amount": 3500000, "decide": True,
+     "docs": [("bank_statement", "HDFC_Bank_Statement_FY25.pdf"), ("itr", "ITR_FY25.pdf"),
+              ("gst", "GST_Returns_FY25.pdf"), ("salary_slip", "Promoter_Remuneration.pdf")]},
+    {"reference": "LS-2026-00125", "borrower_name": "Sri Lakshmi Components", "loan_type": "business",
+     "loan_amount": 2250000, "decide": True,
+     "docs": [("bank_statement", "ICICI_Bank_Statement.pdf"), ("gst", "GST_Returns.pdf")]},
+    {"reference": "LS-2026-00126", "borrower_name": "BluePeak Traders", "loan_type": "business",
+     "loan_amount": 1500000, "decide": False, "docs": []},
+]
+
+
+@api_router.post("/demo/seed")
+async def seed_demo(user: dict = Depends(get_current_user)):
+    created = 0
+    for s in SEED_APPS:
+        existing = await db.applications.find_one({"reference": s["reference"]})
+        if existing:
+            continue
+        created += 1
+        app_id = str(uuid.uuid4())
+        base_dt = now_utc() - timedelta(days=created, minutes=6)
+        app_doc = {
+            "id": app_id,
+            "reference": s["reference"],
+            "borrower_name": s["borrower_name"],
+            "loan_type": s["loan_type"],
+            "loan_amount": s["loan_amount"],
+            "status": "pending",
+            "created_at": iso(base_dt),
+        }
+        await db.applications.insert_one(app_doc)
+        await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id,
+                                       "event": "Application Created", "actor": "System",
+                                       "payload": {"reference": s["reference"]},
+                                       "created_at": iso(base_dt)})
+        for dtype, fname in s["docs"]:
+            await db.documents.insert_one({
+                "id": str(uuid.uuid4()), "application_id": app_id, "doc_type": dtype,
+                "filename": fname, "file_path": None, "file_size": 240000 + len(fname) * 91,
+                "status": "processed", "uploaded_at": iso(base_dt + timedelta(minutes=1)),
+            })
+        if s["docs"]:
+            await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id,
+                                           "event": "Documents Uploaded", "actor": "System",
+                                           "payload": {"count": len(s["docs"])},
+                                           "created_at": iso(base_dt + timedelta(minutes=1))})
+        if s["decide"]:
+            result = compute_decision(s["borrower_name"], s["loan_type"], s["loan_amount"])
+            memo = build_memo_text(s["borrower_name"], s["loan_type"], s["loan_amount"], result)
+            dec_dt = base_dt + timedelta(minutes=result["tat_minutes"])
+            await db.decisions.insert_one({
+                "id": str(uuid.uuid4()), "application_id": app_id,
+                "pd_score": result["pd_score"], "decision": result["decision"],
+                "reason_codes": result["reason_codes"], "cash_flow_summary": result["cash_flow_summary"],
+                "memo_text": memo, "model_version": result["model_version"],
+                "tat_minutes": result["tat_minutes"], "created_at": iso(dec_dt),
+            })
+            await db.applications.update_one({"id": app_id}, {"$set": {"status": "decided"}})
+            await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id,
+                                           "event": "Decision Generated", "actor": "Decision Engine",
+                                           "payload": {"model_version": result["model_version"],
+                                                       "pd_score": result["pd_score"],
+                                                       "decision": result["decision"]},
+                                           "created_at": iso(dec_dt)})
+            await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id,
+                                           "event": "Credit Memo Generated", "actor": "Decision Engine",
+                                           "payload": {"model_version": result["model_version"]},
+                                           "created_at": iso(dec_dt)})
+    return {"created": created, "message": "Sample portfolio loaded" if created else "Sample portfolio already present"}
+
+
+@api_router.get("/")
+async def root():
+    return {"service": "LendSprint AI", "mock_mode": MOCK_MODE}
+
+
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def startup():
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()), "email": admin_email, "password_hash": hash_password(admin_password),
+            "name": "Credit Analyst", "role": "admin", "created_at": iso(now_utc()),
+        })
+        logger.info("Seeded admin user")
+    elif not verify_password(admin_password, existing["password_hash"]):
+        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
+    logger.info(f"LendSprint AI started. MOCK_MODE={MOCK_MODE}")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    client.close()

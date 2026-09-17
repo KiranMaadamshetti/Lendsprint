@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 240 30% 97.5%;
+        --foreground: 222 32% 14%;
+        --card: 0 0% 100%;
+        --card-foreground: 222 32% 14%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222 32% 14%;
+        --primary: 226 55% 21%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 240 22% 96%;
+        --secondary-foreground: 226 40% 24%;
+        --muted: 240 20% 96%;
+        --muted-foreground: 225 12% 46%;
+        --accent: 231 48% 96%;
+        --accent-foreground: 231 60% 34%;
+        --destructive: 0 72% 46%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 240 20% 90%;
+        --input: 240 20% 90%;
+        --ring: 231 55% 40%;
+        --radius: 0.5rem;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    }
+    .tnum {
+        font-variant-numeric: tabular-nums;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+    }
+    .metric-num {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.02em;
+    }
+    .label-eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 11px;
+        font-weight: 600;
+        color: hsl(var(--muted-foreground));
+    }
+}
+
+::selection {
+    background: hsl(231 60% 88%);
+    color: hsl(226 55% 21%);
+}
+
+/* Thin, restrained scrollbars for data-dense surfaces */
+.thin-scroll::-webkit-scrollbar { height: 8px; width: 8px; }
+.thin-scroll::-webkit-scrollbar-thumb { background: hsl(240 12% 82%); border-radius: 8px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes ls-fade-up {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: ls-fade-up 0.28s ease-out both; }
