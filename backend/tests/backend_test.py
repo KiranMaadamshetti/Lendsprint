@@ -176,3 +176,93 @@ class TestApplicationFlow:
     def test_not_found(self, auth):
         r = requests.get(f"{API}/applications/does-not-exist", headers=auth)
         assert r.status_code == 404
+
+
+# --- Reports summary (new) ---
+class TestReports:
+    def test_summary_structure(self, auth):
+        r = requests.get(f"{API}/reports/summary", headers=auth)
+        assert r.status_code == 200, r.text
+        s = r.json()
+        for k in ["totals", "decision_mix", "loan_type_mix", "pd_distribution", "tat_by_type", "approval_by_type"]:
+            assert k in s
+        t = s["totals"]
+        for k in ["applications", "decisions", "approval_rate", "avg_pd", "avg_tat", "overrides"]:
+            assert k in t
+        # decision_mix must include approve/review/reject keys
+        keys = {d["key"] for d in s["decision_mix"]}
+        assert {"approve", "review", "reject"}.issubset(keys)
+        # pd buckets present
+        buckets = {b["bucket"] for b in s["pd_distribution"]}
+        assert {"0-15%", "15-25%", "25-40%", "40%+"}.issubset(buckets)
+
+
+# --- Decision override (new) ---
+class TestOverride:
+    def _ensure_decided_app(self, auth):
+        # Use seeded Sri Lakshmi Components (review) as target
+        apps = requests.get(f"{API}/applications", params={"search": "Sri Lakshmi"}, headers=auth).json()
+        assert apps, "seed missing"
+        return apps[0]["id"]
+
+    def test_override_empty_reason_rejected(self, auth):
+        app_id = self._ensure_decided_app(auth)
+        r = requests.post(f"{API}/applications/{app_id}/decision/override",
+                          json={"decision": "approve", "reason": ""}, headers=auth)
+        assert r.status_code == 422  # pydantic validation
+
+    def test_override_success_and_audit(self, auth):
+        app_id = self._ensure_decided_app(auth)
+        # Fetch current decision
+        det = requests.get(f"{API}/applications/{app_id}", headers=auth).json()
+        current = det["decision"]["decision"]
+        target = "approve" if current != "approve" else "reject"
+
+        r = requests.post(f"{API}/applications/{app_id}/decision/override",
+                          json={"decision": target, "reason": "TEST_override rationale from analyst"},
+                          headers=auth)
+        assert r.status_code == 200, r.text
+        dec = r.json()
+        assert dec["decision"] == target
+        assert dec["override"] is not None
+        assert dec["override"]["reason"] == "TEST_override rationale from analyst"
+        assert dec["model_decision"] in ("approve", "review", "reject")
+
+        # Verify persistence via GET
+        det2 = requests.get(f"{API}/applications/{app_id}", headers=auth).json()
+        assert det2["decision"]["decision"] == target
+        assert det2["decision"]["override"]["reason"] == "TEST_override rationale from analyst"
+
+        # Audit trail contains override event with from/to/reason
+        audit = requests.get(f"{API}/applications/{app_id}/audit", headers=auth).json()
+        ov_events = [e for e in audit if e["event"] == "Decision Overridden"]
+        assert ov_events, "override audit event missing"
+        p = ov_events[-1]["payload"]
+        assert p["to"] == target
+        assert p["reason"] == "TEST_override rationale from analyst"
+        assert "from" in p
+
+    def test_rerun_clears_override(self, auth):
+        app_id = self._ensure_decided_app(auth)
+        # Re-run decision
+        r = requests.post(f"{API}/applications/{app_id}/decision", headers=auth)
+        assert r.status_code == 200
+        dec = r.json()
+        assert dec["override"] is None
+        assert dec["decision"] == dec["model_decision"]
+
+
+# --- use_ai flag on decision (new) ---
+class TestDecisionUseAi:
+    def test_template_memo_source(self, auth):
+        # Use BluePeak (must have docs after prior test); ensure a doc uploaded
+        apps = requests.get(f"{API}/applications", params={"search": "BluePeak"}, headers=auth).json()
+        app_id = apps[0]["id"]
+        detail = requests.get(f"{API}/applications/{app_id}", headers=auth).json()
+        if not detail["documents"]:
+            files = [("files", ("bs.pdf", io.BytesIO(_pdf_bytes()), "application/pdf"))]
+            data = [("doc_types", "bank_statement")]
+            requests.post(f"{API}/applications/{app_id}/documents", files=files, data=data, headers=auth)
+        r = requests.post(f"{API}/applications/{app_id}/decision", json={"use_ai": False}, headers=auth)
+        assert r.status_code == 200
+        assert r.json()["memo_source"] == "template"

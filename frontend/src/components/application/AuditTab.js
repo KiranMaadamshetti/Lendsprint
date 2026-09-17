@@ -25,6 +25,12 @@ function AuditRow({ event }) {
         <div className="tnum w-[150px] shrink-0 text-[12px] text-muted-foreground">{formatDateTime(event.created_at)}</div>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-medium text-foreground">{event.event}</div>
+          {event.event === "Decision Overridden" && (
+            <div className="mt-0.5 text-[12px] text-amber-700">
+              <span className="uppercase">{event.payload?.from}</span> → <span className="uppercase font-medium">{event.payload?.to}</span>
+              {event.payload?.reason ? ` · ${event.payload.reason}` : ""}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground">
           <Icon className="h-3.5 w-3.5" strokeWidth={1.8} />

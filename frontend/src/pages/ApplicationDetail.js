@@ -452,6 +452,7 @@ export default function ApplicationDetail() {
         <DialogContent className="max-w-3xl" data-testid="pdf-preview-dialog">
           <DialogHeader>
             <DialogTitle className="truncate">{preview.name}</DialogTitle>
+            <DialogDescription>Read-only preview of the uploaded document.</DialogDescription>
           </DialogHeader>
           <div className="h-[70vh] w-full rounded-md border border-border bg-secondary/40 overflow-hidden">
             {preview.loading ? (
