@@ -44,7 +44,14 @@ export function MemoTab({ application, decision, onRun }) {
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
         <div>
           <h3 className="text-[15px] font-semibold text-foreground">AI-Drafted Credit Memo</h3>
-          <p className="mt-0.5 text-[12px] text-muted-foreground">Generated from application documents and decision signals.</p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium ${
+              decision.memo_source === "ai" ? "bg-accent text-accent-foreground border-accent-foreground/20" : "bg-secondary text-muted-foreground border-border"
+            }`} data-testid="memo-source-badge">
+              {decision.memo_source === "ai" ? "Drafted by AI · gpt-5.4" : "Deterministic template draft"}
+            </span>
+            <span className="text-[12px] text-muted-foreground">Generated from application documents and decision signals.</span>
+          </div>
         </div>
         <Button size="sm" variant="outline" onClick={copy} data-testid="copy-memo-btn">
           {copied ? <><Check className="mr-1.5 h-4 w-4 text-emerald-600" />Copied</> : <><Copy className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Copy Memo</>}

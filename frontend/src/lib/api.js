@@ -56,8 +56,14 @@ export const documentDownloadUrl = (docId) =>
   `${BASE}/documents/${docId}/download`;
 
 // Decision & audit
-export const runDecision = (id) => client.post(`/applications/${id}/decision`).then((r) => r.data);
+export const runDecision = (id, useAi = false) =>
+  client.post(`/applications/${id}/decision`, { use_ai: useAi }).then((r) => r.data);
+export const overrideDecision = (id, payload) =>
+  client.post(`/applications/${id}/decision/override`, payload).then((r) => r.data);
 export const getAuditTrail = (id) => client.get(`/applications/${id}/audit`).then((r) => r.data);
+export const getReportsSummary = () => client.get("/reports/summary").then((r) => r.data);
+export const fetchDocumentBlob = (docId) =>
+  client.get(`/documents/${docId}/download`, { responseType: "blob" }).then((r) => r.data);
 
 // Demo
 export const seedDemoData = () => client.post("/demo/seed").then((r) => r.data);

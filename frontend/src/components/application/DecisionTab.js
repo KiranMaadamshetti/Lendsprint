@@ -1,7 +1,7 @@
 import { PdGauge } from "@/components/common/PdGauge";
 import { Button } from "@/components/ui/button";
 import { formatLakh, formatDateTime } from "@/lib/format";
-import { FileSearch, Loader2, TrendingUp, TrendingDown, ArrowRight, Wallet, Scale, Coins } from "lucide-react";
+import { FileSearch, Loader2, TrendingUp, TrendingDown, ArrowRight, Wallet, Scale, Coins, ShieldAlert, PenLine } from "lucide-react";
 
 const STEPS = [
   "Reading documents",
@@ -16,6 +16,12 @@ const DECISION_COPY = {
   approve: "Recommended based on the available financial evidence.",
   review: "Manual analyst review recommended before final disposition.",
   reject: "Not recommended based on the available financial evidence.",
+};
+
+const DECISION_TEXT = {
+  approve: "text-emerald-600",
+  review: "text-amber-600",
+  reject: "text-red-600",
 };
 
 function Processing({ stepIdx }) {
@@ -76,24 +82,41 @@ function CashCard({ icon: Icon, label, value, accent }) {
   );
 }
 
-export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments }) {
+export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments, onOverrideClick }) {
   if (running) return <Processing stepIdx={stepIdx} />;
   if (!decision) return <EmptyDecision onRun={onRun} hasDocuments={hasDocuments} />;
 
   const cf = decision.cash_flow_summary;
+  const override = decision.override;
 
   return (
     <div className="space-y-4 animate-fade-up">
+      {override && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3" data-testid="override-banner">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" strokeWidth={1.8} />
+          <div className="text-[13px] text-amber-900">
+            <span className="font-semibold">Analyst override applied.</span>{" "}
+            Model recommended <span className="font-medium uppercase">{override.model_decision}</span>; final decision set to{" "}
+            <span className="font-medium uppercase">{decision.decision}</span> by {override.by} on {formatDateTime(override.at)}.
+            <div className="mt-1 text-amber-800">Reason: {override.reason}</div>
+          </div>
+        </div>
+      )}
+
       {/* Decision + gauge */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-lg border border-border bg-card p-6">
-          <div className="label-eyebrow">Credit Decision</div>
+          <div className="flex items-start justify-between">
+            <div className="label-eyebrow">Credit Decision</div>
+            <Button size="sm" variant="outline" onClick={onOverrideClick} data-testid="override-btn">
+              <PenLine className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.8} />Override
+            </Button>
+          </div>
           <div className="mt-2 flex items-center gap-3">
-            <span className={`text-[30px] font-bold tracking-tight ${
-              decision.decision === "approve" ? "text-emerald-600" : decision.decision === "review" ? "text-amber-600" : "text-red-600"
-            }`} data-testid="decision-result">
+            <span className={`text-[30px] font-bold tracking-tight ${DECISION_TEXT[decision.decision]}`} data-testid="decision-result">
               {decision.decision.toUpperCase()}
             </span>
+            {override && <span className="rounded border border-border bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Overridden</span>}
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground">{DECISION_COPY[decision.decision]}</p>
           <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 border-t border-border pt-4 text-[12px]">
@@ -103,7 +126,7 @@ export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments })
           </div>
         </div>
         <div className="rounded-lg border border-border bg-card p-6 flex flex-col items-center justify-center">
-          <PdGauge pd={decision.pd_score} decision={decision.decision} size={210} />
+          <PdGauge pd={decision.pd_score} decision={decision.model_decision || decision.decision} size={210} />
         </div>
       </div>
 

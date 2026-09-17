@@ -117,6 +117,23 @@ class ApplicationCreate(BaseModel):
         return v
 
 
+class DecisionOptions(BaseModel):
+    use_ai: bool = False
+
+
+class OverrideIn(BaseModel):
+    decision: Literal["approve", "review", "reject"]
+    reason: str = Field(..., min_length=3, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def _strip_reason(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("Please provide a reason for the override")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Decision engine (mock)
 # ---------------------------------------------------------------------------
@@ -258,10 +275,13 @@ async def generate_ai_memo(borrower: str, loan_type: str, loan_amount: float, re
         ).with_model("openai", "gpt-5.4")
         resp = await chat.send_message(UserMessage(text=prompt))
         text = resp if isinstance(resp, str) else str(resp)
-        return text.strip() or build_memo_text(borrower, loan_type, loan_amount, result)
+        text = text.strip()
+        if not text:
+            return build_memo_text(borrower, loan_type, loan_amount, result), "template"
+        return text, "ai"
     except Exception as e:
         logger.warning(f"AI memo generation failed, using template: {e}")
-        return build_memo_text(borrower, loan_type, loan_amount, result)
+        return build_memo_text(borrower, loan_type, loan_amount, result), "template"
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +483,8 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/applications/{app_id}/decision")
-async def run_decision(app_id: str, user: dict = Depends(get_current_user)):
+async def run_decision(app_id: str, options: DecisionOptions = DecisionOptions(),
+                       user: dict = Depends(get_current_user)):
     application = await db.applications.find_one({"id": app_id}, {"_id": 0})
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -473,12 +494,14 @@ async def run_decision(app_id: str, user: dict = Depends(get_current_user)):
 
     result = compute_decision(application["borrower_name"], application["loan_type"], application["loan_amount"])
 
-    if MOCK_MODE:
+    use_ai = options.use_ai or (not MOCK_MODE)
+    if use_ai:
+        memo_text, memo_source = await generate_ai_memo(
+            application["borrower_name"], application["loan_type"], application["loan_amount"], result)
+    else:
         memo_text = build_memo_text(application["borrower_name"], application["loan_type"],
                                     application["loan_amount"], result)
-    else:
-        memo_text = await generate_ai_memo(application["borrower_name"], application["loan_type"],
-                                           application["loan_amount"], result)
+        memo_source = "template"
 
     created = iso(now_utc())
     decision_doc = {
@@ -486,9 +509,12 @@ async def run_decision(app_id: str, user: dict = Depends(get_current_user)):
         "application_id": app_id,
         "pd_score": result["pd_score"],
         "decision": result["decision"],
+        "model_decision": result["decision"],
+        "override": None,
         "reason_codes": result["reason_codes"],
         "cash_flow_summary": result["cash_flow_summary"],
         "memo_text": memo_text,
+        "memo_source": memo_source,
         "model_version": result["model_version"],
         "tat_minutes": result["tat_minutes"],
         "created_at": created,
@@ -500,10 +526,105 @@ async def run_decision(app_id: str, user: dict = Depends(get_current_user)):
                       {"model_version": result["model_version"], "pd_score": result["pd_score"],
                        "decision": result["decision"]})
     await write_audit(app_id, "Credit Memo Generated", "Decision Engine",
-                      {"model_version": result["model_version"], "words": len(memo_text.split())})
+                      {"model_version": result["model_version"], "memo_source": memo_source,
+                       "words": len(memo_text.split())})
 
     decision_doc.pop("_id", None)
     return decision_doc
+
+
+@api_router.post("/applications/{app_id}/decision/override")
+async def override_decision(app_id: str, body: OverrideIn, user: dict = Depends(get_current_user)):
+    dec = await db.decisions.find_one({"application_id": app_id})
+    if not dec:
+        raise HTTPException(status_code=404, detail="No decision to override. Run the decision engine first.")
+    model_decision = dec.get("model_decision") or dec["decision"]
+    if body.decision == dec["decision"] and not dec.get("override"):
+        raise HTTPException(status_code=400, detail="Override decision matches the current decision")
+    override = {
+        "model_decision": model_decision,
+        "reason": body.reason,
+        "by": user.get("name", "Analyst"),
+        "at": iso(now_utc()),
+    }
+    await db.decisions.update_one({"application_id": app_id},
+                                  {"$set": {"decision": body.decision, "model_decision": model_decision,
+                                            "override": override}})
+    await write_audit(app_id, "Decision Overridden", user.get("name", "Analyst"),
+                      {"from": model_decision, "to": body.decision, "reason": body.reason})
+    updated = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
+    return updated
+
+
+@api_router.get("/reports/summary")
+async def reports_summary(user: dict = Depends(get_current_user)):
+    apps = await db.applications.find({}, {"_id": 0}).to_list(2000)
+    decisions = await db.decisions.find({}, {"_id": 0}).to_list(2000)
+
+    decision_mix = {"approve": 0, "review": 0, "reject": 0}
+    for d in decisions:
+        decision_mix[d["decision"]] = decision_mix.get(d["decision"], 0) + 1
+
+    loan_type_mix = {"business": 0, "personal": 0, "MSME": 0}
+    for a in apps:
+        loan_type_mix[a["loan_type"]] = loan_type_mix.get(a["loan_type"], 0) + 1
+
+    pd_buckets = {"0-15%": 0, "15-25%": 0, "25-40%": 0, "40%+": 0}
+    for d in decisions:
+        p = d["pd_score"] * 100
+        if p < 15:
+            pd_buckets["0-15%"] += 1
+        elif p < 25:
+            pd_buckets["15-25%"] += 1
+        elif p < 40:
+            pd_buckets["25-40%"] += 1
+        else:
+            pd_buckets["40%+"] += 1
+
+    # avg TAT and approval rate per loan type
+    tat_acc, tat_cnt, appr_acc = {}, {}, {}
+    dmap = {d["application_id"]: d for d in decisions}
+    for a in apps:
+        d = dmap.get(a["id"])
+        if not d:
+            continue
+        lt = a["loan_type"]
+        tat_acc[lt] = tat_acc.get(lt, 0) + d["tat_minutes"]
+        tat_cnt[lt] = tat_cnt.get(lt, 0) + 1
+        appr_acc.setdefault(lt, {"approve": 0, "total": 0})
+        appr_acc[lt]["total"] += 1
+        if d["decision"] == "approve":
+            appr_acc[lt]["approve"] += 1
+
+    tat_by_type = [{"type": LOAN_TYPE_LABEL[k], "avg_tat": round(tat_acc[k] / tat_cnt[k])}
+                   for k in tat_acc]
+    approval_by_type = [{"type": LOAN_TYPE_LABEL[k],
+                         "rate": round((v["approve"] / v["total"]) * 100) if v["total"] else 0}
+                        for k, v in appr_acc.items()]
+
+    total_dec = len(decisions)
+    approval_rate = round((decision_mix["approve"] / total_dec) * 100, 1) if total_dec else 0.0
+    avg_pd = round((sum(d["pd_score"] for d in decisions) / total_dec) * 100, 1) if total_dec else 0.0
+    avg_tat = round(sum(d["tat_minutes"] for d in decisions) / total_dec) if total_dec else 0
+    overrides = sum(1 for d in decisions if d.get("override"))
+
+    return {
+        "totals": {
+            "applications": len(apps),
+            "decisions": total_dec,
+            "approval_rate": approval_rate,
+            "avg_pd": avg_pd,
+            "avg_tat": avg_tat,
+            "overrides": overrides,
+        },
+        "decision_mix": [{"name": "Approve", "key": "approve", "value": decision_mix["approve"]},
+                         {"name": "Review", "key": "review", "value": decision_mix["review"]},
+                         {"name": "Reject", "key": "reject", "value": decision_mix["reject"]}],
+        "loan_type_mix": [{"name": LOAN_TYPE_LABEL[k], "value": v} for k, v in loan_type_mix.items()],
+        "pd_distribution": [{"bucket": k, "count": v} for k, v in pd_buckets.items()],
+        "tat_by_type": tat_by_type,
+        "approval_by_type": approval_by_type,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -564,8 +685,9 @@ async def seed_demo(user: dict = Depends(get_current_user)):
             await db.decisions.insert_one({
                 "id": str(uuid.uuid4()), "application_id": app_id,
                 "pd_score": result["pd_score"], "decision": result["decision"],
+                "model_decision": result["decision"], "override": None,
                 "reason_codes": result["reason_codes"], "cash_flow_summary": result["cash_flow_summary"],
-                "memo_text": memo, "model_version": result["model_version"],
+                "memo_text": memo, "memo_source": "template", "model_version": result["model_version"],
                 "tat_minutes": result["tat_minutes"], "created_at": iso(dec_dt),
             })
             await db.applications.update_one({"id": app_id}, {"$set": {"status": "decided"}})

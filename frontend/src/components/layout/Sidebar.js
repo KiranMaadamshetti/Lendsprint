@@ -15,7 +15,7 @@ const mainItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, active: true },
   { to: "/applications", label: "Applications", icon: FileText, active: true },
   { label: "Decisioning", icon: Gauge, active: false },
-  { label: "Reports", icon: BarChart3, active: false },
+  { to: "/reports", label: "Reports", icon: BarChart3, active: true },
   { label: "Audit", icon: ShieldCheck, active: false },
 ];
 

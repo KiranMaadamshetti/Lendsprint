@@ -5,8 +5,10 @@ import {
   getApplication,
   getAuditTrail,
   runDecision,
+  overrideDecision,
   uploadDocuments,
   deleteDocument,
+  fetchDocumentBlob,
   documentDownloadUrl,
   apiErrorMessage,
 } from "@/lib/api";
@@ -16,10 +18,19 @@ import { DecisionTab } from "@/components/application/DecisionTab";
 import { MemoTab } from "@/components/application/MemoTab";
 import { AuditTab } from "@/components/application/AuditTab";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ArrowLeft, Play, RotateCw, FileText, Download, Trash2, UploadCloud, Loader2, Plus,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  ArrowLeft, Play, RotateCw, FileText, Download, Trash2, UploadCloud, Loader2, Plus, Eye, Sparkles,
 } from "lucide-react";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,6 +47,16 @@ export default function ApplicationDetail() {
   const [running, setRunning] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [useAi, setUseAi] = useState(false);
+
+  // override dialog
+  const [ovOpen, setOvOpen] = useState(false);
+  const [ovDecision, setOvDecision] = useState("review");
+  const [ovReason, setOvReason] = useState("");
+  const [ovSaving, setOvSaving] = useState(false);
+
+  // pdf preview
+  const [preview, setPreview] = useState({ open: false, url: null, name: "", loading: false });
 
   const load = useCallback(async () => {
     try {
@@ -64,18 +85,41 @@ export default function ApplicationDetail() {
     setStepIdx(0);
     const timer = setInterval(() => setStepIdx((i) => Math.min(i + 1, 5)), 430);
     try {
-      const [dec] = await Promise.all([runDecision(id), sleep(2500)]);
+      const [dec] = await Promise.all([runDecision(id, useAi), sleep(2500)]);
       clearInterval(timer);
       setStepIdx(6);
       setData((d) => ({ ...d, decision: dec, application: { ...d.application, status: "decided" } }));
       const a = await getAuditTrail(id);
       setAudit(a);
-      toast.success("Decision generated");
+      toast.success(useAi ? "Decision generated · AI memo drafted" : "Decision generated");
     } catch (err) {
       clearInterval(timer);
       toast.error(apiErrorMessage(err, "Decision could not be generated"));
     } finally {
       setRunning(false);
+    }
+  };
+
+  const openOverride = () => {
+    setOvDecision(data?.decision?.decision || "review");
+    setOvReason("");
+    setOvOpen(true);
+  };
+
+  const submitOverride = async () => {
+    if (ovReason.trim().length < 3) return toast.error("Please provide a reason for the override");
+    setOvSaving(true);
+    try {
+      const dec = await overrideDecision(id, { decision: ovDecision, reason: ovReason.trim() });
+      setData((d) => ({ ...d, decision: dec }));
+      const a = await getAuditTrail(id);
+      setAudit(a);
+      setOvOpen(false);
+      toast.success("Decision overridden");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Unable to override decision"));
+    } finally {
+      setOvSaving(false);
     }
   };
 
@@ -104,6 +148,25 @@ export default function ApplicationDetail() {
     } catch (err) {
       toast.error(apiErrorMessage(err));
     }
+  };
+
+  const openPreview = async (doc) => {
+    setPreview({ open: true, url: null, name: doc.filename, loading: true });
+    try {
+      const blob = await fetchDocumentBlob(doc.id);
+      const url = URL.createObjectURL(blob);
+      setPreview({ open: true, url, name: doc.filename, loading: false });
+    } catch (err) {
+      setPreview({ open: false, url: null, name: "", loading: false });
+      toast.error(err?.response?.status === 404
+        ? "This sample document has no stored file to preview. Upload a real PDF to preview it."
+        : apiErrorMessage(err, "Unable to preview document"));
+    }
+  };
+
+  const closePreview = () => {
+    if (preview.url) URL.revokeObjectURL(preview.url);
+    setPreview({ open: false, url: null, name: "", loading: false });
   };
 
   if (loading) {
@@ -161,15 +224,22 @@ export default function ApplicationDetail() {
             <span className="tnum">{formatINR(application.loan_amount)}</span>
           </div>
         </div>
-        <Button onClick={runDecisionFlow} disabled={running} data-testid="run-decision-header-btn">
-          {running ? (
-            <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Running Decision…</>
-          ) : decision ? (
-            <><RotateCw className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Re-run Decision</>
-          ) : (
-            <><Play className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Run Decision</>
-          )}
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 h-9" title="Draft the credit memo with the live LLM">
+            <Sparkles className={`h-4 w-4 ${useAi ? "text-accent-foreground" : "text-muted-foreground"}`} strokeWidth={1.8} />
+            <Label htmlFor="ai-memo" className="text-[12px] font-medium text-foreground cursor-pointer">AI memo</Label>
+            <Switch id="ai-memo" checked={useAi} onCheckedChange={setUseAi} data-testid="ai-memo-toggle" />
+          </div>
+          <Button onClick={runDecisionFlow} disabled={running} data-testid="run-decision-header-btn">
+            {running ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Running Decision…</>
+            ) : decision ? (
+              <><RotateCw className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Re-run Decision</>
+            ) : (
+              <><Play className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Run Decision</>
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Summary strip */}
@@ -272,7 +342,7 @@ export default function ApplicationDetail() {
               </div>
             ) : (
               <div className="overflow-x-auto thin-scroll">
-                <table className="w-full min-w-[640px] text-left">
+                <table className="w-full min-w-[680px] text-left">
                   <thead>
                     <tr className="border-b border-border">
                       {["Type", "Filename", "Status", "Uploaded", "Size", ""].map((h) => (
@@ -292,6 +362,9 @@ export default function ApplicationDetail() {
                         <td className="px-4 py-3 tnum text-[13px] text-muted-foreground">{formatFileSize(d.file_size)}</td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => openPreview(d)} className="grid h-7 w-7 place-items-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" title="View" data-testid={`view-doc-${d.id}`}>
+                              <Eye className="h-4 w-4" strokeWidth={1.8} />
+                            </button>
                             <a href={documentDownloadUrl(d.id)} target="_blank" rel="noreferrer" className="grid h-7 w-7 place-items-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" title="Download" data-testid={`download-doc-${d.id}`}>
                               <Download className="h-4 w-4" strokeWidth={1.8} />
                             </a>
@@ -311,7 +384,14 @@ export default function ApplicationDetail() {
 
         {/* Decision */}
         <TabsContent value="decision" className="mt-5">
-          <DecisionTab decision={decision} running={running} stepIdx={stepIdx} onRun={runDecisionFlow} hasDocuments={documents.length > 0} />
+          <DecisionTab
+            decision={decision}
+            running={running}
+            stepIdx={stepIdx}
+            onRun={runDecisionFlow}
+            hasDocuments={documents.length > 0}
+            onOverrideClick={openOverride}
+          />
         </TabsContent>
 
         {/* Credit Memo */}
@@ -324,6 +404,66 @@ export default function ApplicationDetail() {
           <AuditTab events={audit} />
         </TabsContent>
       </Tabs>
+
+      {/* Override dialog */}
+      <Dialog open={ovOpen} onOpenChange={setOvOpen}>
+        <DialogContent className="sm:max-w-md" data-testid="override-dialog">
+          <DialogHeader>
+            <DialogTitle>Override credit decision</DialogTitle>
+            <DialogDescription>
+              The model recommended <span className="font-medium uppercase">{decision?.model_decision || decision?.decision}</span>.
+              An override is recorded in the audit trail with your reason.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="space-y-1.5">
+              <Label className="text-[13px]">Final decision</Label>
+              <Select value={ovDecision} onValueChange={setOvDecision}>
+                <SelectTrigger data-testid="override-decision-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="approve">Approve</SelectItem>
+                  <SelectItem value="review">Review</SelectItem>
+                  <SelectItem value="reject">Reject</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[13px]">Reason</Label>
+              <Textarea
+                data-testid="override-reason-input"
+                value={ovReason}
+                onChange={(e) => setOvReason(e.target.value)}
+                placeholder="Document the rationale for overriding the model decision…"
+                rows={4}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOvOpen(false)}>Cancel</Button>
+            <Button onClick={submitOverride} disabled={ovSaving} data-testid="override-submit-btn">
+              {ovSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : "Apply override"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* PDF preview dialog */}
+      <Dialog open={preview.open} onOpenChange={(o) => !o && closePreview()}>
+        <DialogContent className="max-w-3xl" data-testid="pdf-preview-dialog">
+          <DialogHeader>
+            <DialogTitle className="truncate">{preview.name}</DialogTitle>
+          </DialogHeader>
+          <div className="h-[70vh] w-full rounded-md border border-border bg-secondary/40 overflow-hidden">
+            {preview.loading ? (
+              <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading document…
+              </div>
+            ) : preview.url ? (
+              <iframe title={preview.name} src={preview.url} className="h-full w-full" />
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
