@@ -1021,8 +1021,11 @@ async def get_credit_brain(app_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Application not found")
     decision = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
     if decision and decision.get("credit_brain"):
-        return {"application": application, "credit_brain": decision["credit_brain"],
-                "computed": False}
+        cb = decision["credit_brain"]
+        if "evidence" not in cb and cb.get("financials"):
+            seed = _seed_int(application["borrower_name"], application["loan_amount"])
+            cb["evidence"] = build_evidence(cb["financials"], seed)
+        return {"application": application, "credit_brain": cb, "computed": False}
     brain = credit_brain(application)
     return {"application": application, "credit_brain": brain, "computed": True}
 
@@ -1046,6 +1049,9 @@ async def get_application(app_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Application not found")
     documents = await db.documents.find({"application_id": app_id}, {"_id": 0}).sort("uploaded_at", 1).to_list(100)
     decision = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
+    if decision and decision.get("credit_brain") and "evidence" not in decision["credit_brain"] and decision["credit_brain"].get("financials"):
+        seed = _seed_int(application["borrower_name"], application["loan_amount"])
+        decision["credit_brain"]["evidence"] = build_evidence(decision["credit_brain"]["financials"], seed)
     return {"application": application, "documents": documents, "decision": decision}
 
 

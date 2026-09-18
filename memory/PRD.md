@@ -70,5 +70,10 @@ Shipped + tested (46/46 backend + full frontend E2E):
 
 ## Phase 2 backlog (agreed, deferred)
 - P1: Google Drive + OneDrive OAuth ingestion (needs Google/Microsoft app credentials) with DocumentSourceProvider abstraction; mock providers interim.
-- P1: Remaining Phase-1 spec items — Evidence panel + source attribution, AI Analyst Challenge, per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
+- P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
+
+## Ask Credit Brain + Evidence Chain (2026-06-18)
+Shipped + tested (iteration_5: 6/6 backend + full frontend E2E, 100%):
+- ✅ Ask Credit Brain: new "Ask Brain" tab on Application Detail. Application-grounded LLM assistant (Emergent LLM key, OpenAI gpt-5.4 via emergentintegrations, LIVE not mocked). Preset chips (why approved / why this amount / key risks / rules triggered) + free-text. Answers cite figures & policy rule IDs; refuses out-of-scope questions. Chat persisted in `brain_chats` collection; history rehydrates on reload. Endpoints: POST /api/applications/{id}/ask {question, session_id?}, GET /api/applications/{id}/chat.
+- ✅ Evidence Chain: every Credit Brain financial figure (FOIR, DSCR, turnover, avg credits, balance, net cash flow, existing EMI, CIBIL, vintage, bounces) is clickable → right-side Sheet with value, calculation formula + inputs, source document + page ref, and extraction confidence (deterministic mock attribution). Wired into Credit Brain tab (12 metrics) and Decision tab (3 cash-flow cards). Backend `build_evidence()` adds `evidence` to credit_brain output; GET /credit-brain/{id} and GET /applications/{id} backfill evidence for decisions computed before this feature.

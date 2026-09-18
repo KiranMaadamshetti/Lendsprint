@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 5 tested Ask Credit Brain (live LLM) + Evidence Chain features on preview URL. BACKEND (/app/backend/tests/test_ask_brain_and_evidence.py): 6/6 passed after re-running the decision on Arvind. Coverage: (a) GET /api/credit-brain/{id} returns credit_brain.evidence with all required keys (foir_before, dscr, annual_turnover, avg_monthly_credits, net_cash_flow, existing_emi, cibil) each containing source/page/calculation/confidence/formula/inputs; (b) GET /api/applications/{id}/chat returns list; 404 on unknown id; (c) POST /api/applications/{id}/ask with 'Why was this application approved?' returns a grounded answer (~5-8s LLM latency, gpt-5.4 via emergentintegrations) and persists both user+assistant messages; (d) unrelated question 'What is the capital of France?' produces refusal 'I can only answer questions about this application's credit assessment.'; (e) 404 for bogus app id on POST /ask. FRONTEND (Playwright, admin@LendSprint@2026, Arvind Engineering LS-2026-00124): tab-ask visible on ApplicationDetail; 4 preset chips render; clicking 'Why was this application approved?' shows chat-thinking indicator, then a chat-msg-assistant citing 'Policy v1.7 with 8/8 rules passed', 'post-loan FOIR 25.8%', '58% cap'; Enter-to-send with free text 'What is the capital of France?' produces refusal answer; page reload rehydrates chat history (6 user + 6 assistant messages via GET /chat). Credit Brain tab: evidence-metric-dscr and evidence-metric-annual-turnover present and clicking DSCR opens evidence-sheet with evidence-value '3.79x', evidence-source 'Bank Statement + Existing Loan Statement', evidence-confidence '97%'. Decision tab: cashcard-monthly-income / -monthly-obligations / -net-cash-flow all present and clickable, Net Cash Flow sheet shows '₹9.07 L'. Regression: tabs Overview/Documents/Policy/Decision/Credit Memo/Audit Trail all render without console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/credit-brain/{id}", "issue": "Returns cached decision.credit_brain even when it was persisted BEFORE the evidence feature was added — that cached object has NO 'evidence' key, so the frontend Evidence Chain silently shows non-clickable metric cards until the decision is re-run. Repro: on a fresh DB, seed apps whose decisions were computed pre-evidence, then GET /api/credit-brain/{id} -> no 'evidence'. Fix: in get_credit_brain(), if decision['credit_brain'] lacks 'evidence', recompute credit_brain(application) or backfill the evidence via build_evidence(financials, seed) before returning."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ask_brain_and_evidence.py",
+    "/app/test_reports/pytest/pytest_ask_brain.xml"
+  ],
+  "action_items": [
+    "Backfill/recompute 'evidence' inside GET /api/credit-brain/{id} when the cached decision.credit_brain lacks it, so users don't need to re-run decisions on old approved applications.",
+    "Spec/testid mismatch: review request lists 'evidence-metric-foir-pre-loan-' (with trailing dash) but EvidencePanel.js kebab() strips the trailing dash — actual testid is 'evidence-metric-foir-pre-loan'. Either fix the spec doc or drop the trailing-dash strip in kebab(). Functionality is fine, only external testing scripts using the spec's testid literally will fail."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1530 lines (still growing) — split into modules: auth, applications, decisions, credit_brain (+ evidence), ask_brain, policy, rbac.",
+    "run_brain_chat() imports emergentintegrations inside the function on every call — fine for cold-start isolation but adds ~10-30ms per request; consider module-level import with lazy fallback.",
+    "The Ask Brain endpoint persists the user message BEFORE calling the LLM; if the LLM raises, the user message stays in chat history but the assistant reply is missing — reload shows an orphaned user bubble. Consider transactional insert (only after LLM success) or write a placeholder assistant error message on failure.",
+    "build_ask_context sends full policy_evaluation and ALL financials on every /ask call — token cost scales linearly with history; consider caching context or trimming history >6 turns (already trimmed) plus context.",
+    "GET /api/applications/{id}/chat has no pagination guard beyond to_list(200); acceptable for now but flag for long-lived apps.",
+    "EvidencePanel.js: onOpen receives {...evidence, value} but 'label' comes from evidence itself; if a caller passes evidence without 'label' key the sheet title is empty — add a fallback to the metric's label prop."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_ask_brain_and_evidence.py",
+    "/app/test_reports/iteration_5.json",
+    "/app/test_reports/pytest/pytest_ask_brain.xml"
+  ],
+  "success_rate": {"backend": "100% (6/6 new Ask Brain + Evidence tests; prior 46/46 regression suites untouched)", "frontend": "100% of Ask Brain + Evidence flows + tab regressions"},
+  "test_credentials": "admin kiranmaadamshetti@gmail.com / LendSprint@2026",
+  "seed_data_creation": "Re-ran decision on Arvind Engineering (LS-2026-00124) via POST /decision to refresh its credit_brain with the new 'evidence' block (this was needed because the earlier stored decision predated the feature). Added several user+assistant messages into brain_chats collection for Arvind while testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Arvind's decision now includes evidence. Other seed apps with pre-existing decisions may still be missing 'evidence' inside stored decision.credit_brain until either the endpoint is patched to backfill or those decisions are re-run. Ask Brain uses live gpt-5.4 via emergentintegrations — expect 3-10s latency per POST /ask. brain_chats collection now has real chat rows for the Arvind app (session_id 'brain-<arvind_id>').",
+  "rca of the issue": "Evidence backfill gap: build_evidence() is only invoked inside credit_brain() (line 551 in server.py). compute_full_decision() calls credit_brain() and its output is persisted into the decisions collection during POST /decision. Any decision saved before the 'evidence' key was added still has an evidence-less credit_brain sub-doc. GET /api/credit-brain/{id} short-circuits at line 1023 (`if decision and decision.get('credit_brain'): return decision['credit_brain']`) and never recomputes. Mitigation: inside get_credit_brain(), check `if 'evidence' not in decision['credit_brain']:` and either call `credit_brain(application)` fresh or splice in `build_evidence(decision['credit_brain']['financials'], _seed_int(...))` before returning. A DB migration to backfill existing rows is optional."
+}
