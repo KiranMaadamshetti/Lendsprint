@@ -141,13 +141,13 @@ class TestApplicationFlow:
         assert dec["decision"] in ("approve", "review", "reject")
         assert 0 < dec["pd_score"] < 1
         assert len(dec["reason_codes"]) >= 3
-        assert dec["model_version"] == "mock-v1.0"
+        assert dec["model_version"].startswith(("mock-", "credit-brain-"))
         assert dec["memo_text"] and len(dec["memo_text"].split()) > 50
 
         # Verify persisted after refresh
         detail2 = requests.get(f"{API}/applications/{app_id}", headers=auth).json()
         assert detail2["decision"]["pd_score"] == dec["pd_score"]
-        assert detail2["application"]["status"] == "decided"
+        assert detail2["application"]["status"] in ("decided", "approved", "rejected", "review")
 
         # Audit trail contains all events
         audit = requests.get(f"{API}/applications/{app_id}/audit", headers=auth).json()
@@ -169,9 +169,8 @@ class TestApplicationFlow:
         r_dec = requests.post(f"{API}/applications/{app_id}/decision", headers=auth)
         assert r_dec.status_code == 200
         dec = r_dec.json()
-        # Known profile: bluepeak -> approve pd 0.214
-        assert dec["decision"] == "approve"
-        assert dec["pd_score"] == 0.214
+        # BluePeak seeds with no docs; after uploading one doc it should REJECT per Phase 1 policy
+        assert dec["decision"] == "reject"
 
     def test_not_found(self, auth):
         r = requests.get(f"{API}/applications/does-not-exist", headers=auth)
@@ -250,6 +249,182 @@ class TestOverride:
         dec = r.json()
         assert dec["override"] is None
         assert dec["decision"] == dec["model_decision"]
+
+
+# --- Credit Policy Engine (Phase 1) ---
+class TestCreditPolicy:
+    def test_get_active_policy(self, auth):
+        r = requests.get(f"{API}/credit-policy", headers=auth)
+        assert r.status_code == 200
+        p = r.json()
+        assert p["status"] == "active"
+        assert p["version"].startswith("v")
+        assert p["rules"]["max_foir"] in (0.6, 0.58)  # may be updated by other test
+        assert p["rules"]["min_dscr"] == 1.5
+        assert p["rules"]["min_cibil"] == 680
+        assert "roi_rules" in p and len(p["roi_rules"]) >= 3
+        assert "tenure_rules" in p
+
+    def test_versions_list(self, auth):
+        r = requests.get(f"{API}/credit-policy/versions", headers=auth)
+        assert r.status_code == 200
+        versions = r.json()
+        active = [v for v in versions if v["status"] == "active"]
+        assert len(active) == 1
+
+    def test_simulate_stricter_thresholds_changes_mix(self, auth):
+        r = requests.post(f"{API}/credit-policy/simulate",
+                          json={"rules": {"max_foir": 0.40, "min_cibil": 750}}, headers=auth)
+        assert r.status_code == 200, r.text
+        s = r.json()
+        for k in ("current_mix", "proposed_mix", "changes", "applications"):
+            assert k in s
+        assert s["applications"] >= 3
+        # Stricter policy => at least one borrower moves to worse decision
+        assert len(s["changes"]) >= 1
+        # Each change has expected fields
+        for c in s["changes"]:
+            assert {"reference", "borrower", "from", "to"}.issubset(c.keys())
+
+    def test_update_policy_bumps_version_and_archives(self, auth):
+        # Get baseline
+        before = requests.get(f"{API}/credit-policy", headers=auth).json()
+        before_ver = before["version"]
+        # PUT change (only rules merge)
+        r = requests.put(f"{API}/credit-policy",
+                         json={"rules": {"max_foir": 0.58}}, headers=auth)
+        assert r.status_code == 200, r.text
+        new = r.json()
+        # version bumped
+        maj, minr = before_ver.lstrip("v").split(".")
+        expected = f"v{maj}.{int(minr) + 1}"
+        assert new["version"] == expected
+        assert new["status"] == "active"
+        assert new["rules"]["max_foir"] == 0.58
+        # untouched rules preserved
+        assert new["rules"]["min_cibil"] == before["rules"]["min_cibil"]
+        # versions list has old archived + new active
+        versions = requests.get(f"{API}/credit-policy/versions", headers=auth).json()
+        by_ver = {v["version"]: v for v in versions}
+        assert by_ver[expected]["status"] == "active"
+        assert by_ver[before_ver]["status"] == "archived"
+        # exactly one active
+        assert sum(1 for v in versions if v["status"] == "active") == 1
+
+
+# --- Credit Brain endpoint ---
+class TestCreditBrainEndpoint:
+    def test_get_credit_brain_after_decision(self, auth):
+        apps = requests.get(f"{API}/applications", params={"search": "Arvind"}, headers=auth).json()
+        assert apps
+        app_id = apps[0]["id"]
+        r = requests.get(f"{API}/credit-brain/{app_id}", headers=auth)
+        assert r.status_code == 200
+        d = r.json()
+        assert "credit_brain" in d
+        cb = d["credit_brain"]
+        for k in ("financials", "cash_flow_trend", "positive_signals", "risk_signals"):
+            assert k in cb
+
+    def test_get_credit_brain_pending_app_computed(self, auth):
+        # Create a fresh app (no decision) and confirm on-the-fly brain
+        payload = {"borrower_name": "TEST_CB Borrower", "loan_type": "business", "loan_amount": 500000}
+        c = requests.post(f"{API}/applications", json=payload, headers=auth)
+        assert c.status_code == 201
+        app_id = c.json()["id"]
+        r = requests.get(f"{API}/credit-brain/{app_id}", headers=auth)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["computed"] is True
+        assert "financials" in d["credit_brain"]
+
+
+# --- Policy Evaluation endpoint ---
+class TestPolicyEvaluationEndpoint:
+    def test_404_before_decision(self, auth):
+        payload = {"borrower_name": "TEST_PE Borrower", "loan_type": "business", "loan_amount": 500000}
+        c = requests.post(f"{API}/applications", json=payload, headers=auth)
+        app_id = c.json()["id"]
+        r = requests.get(f"{API}/applications/{app_id}/policy-evaluation", headers=auth)
+        assert r.status_code == 404
+
+    def test_after_decision(self, auth):
+        apps = requests.get(f"{API}/applications", params={"search": "Arvind"}, headers=auth).json()
+        app_id = apps[0]["id"]
+        r = requests.get(f"{API}/applications/{app_id}/policy-evaluation", headers=auth)
+        assert r.status_code == 200
+        pe = r.json()
+        assert pe["overall"] in ("PASS", "FAIL", "REVIEW")
+        assert isinstance(pe.get("rules", []), list)
+        assert len(pe["rules"]) >= 6
+
+
+# --- End-to-end decision engine (Phase 1) ---
+class TestDecisionEngine:
+    def _ensure_decided(self, auth, search):
+        apps = requests.get(f"{API}/applications", params={"search": search}, headers=auth).json()
+        assert apps, f"seed missing: {search}"
+        app_id = apps[0]["id"]
+        det = requests.get(f"{API}/applications/{app_id}", headers=auth).json()
+        if not det.get("decision"):
+            # Upload doc if needed
+            if not det["documents"]:
+                files = [("files", ("s.pdf", io.BytesIO(_pdf_bytes()), "application/pdf"))]
+                data = [("doc_types", "bank_statement")]
+                requests.post(f"{API}/applications/{app_id}/documents", files=files, data=data, headers=auth)
+            requests.post(f"{API}/applications/{app_id}/decision", headers=auth)
+            det = requests.get(f"{API}/applications/{app_id}", headers=auth).json()
+        return det
+
+    def test_arvind_approve(self, auth):
+        det = self._ensure_decided(auth, "Arvind")
+        d = det["decision"]
+        assert d["decision"] == "approve"
+        assert d.get("risk_grade") == "B"
+        assert d.get("roi") == 20
+        assert d.get("tenure_months") == 48
+        assert d.get("emi", 0) > 0
+        wf = d.get("eligibility_waterfall") or []
+        assert len(wf) >= 6
+        pe = d.get("policy_evaluation") or {}
+        assert pe.get("overall") == "PASS"
+        assert len(pe.get("rules", [])) >= 8
+        cb = d.get("credit_brain") or {}
+        assert cb.get("financials") and cb.get("positive_signals")
+        assert len(d.get("memo_text", "").split()) > 500
+
+    def test_srilakshmi_review_C(self, auth):
+        det = self._ensure_decided(auth, "Sri Lakshmi")
+        d = det["decision"]
+        assert d["decision"] == "review"
+        assert d.get("risk_grade") == "C"
+
+    def test_bluepeak_reject_flow(self, auth):
+        apps = requests.get(f"{API}/applications", params={"search": "BluePeak"}, headers=auth).json()
+        assert apps
+        app_id = apps[0]["id"]
+        # Reset by deleting documents+decision would require admin ops; just ensure doc present then rerun
+        det = requests.get(f"{API}/applications/{app_id}", headers=auth).json()
+        if not det["documents"]:
+            # 400 with no docs
+            r_nodoc = requests.post(f"{API}/applications/{app_id}/decision", headers=auth)
+            assert r_nodoc.status_code == 400
+            files = [("files", ("s.pdf", io.BytesIO(_pdf_bytes()), "application/pdf"))]
+            data = [("doc_types", "bank_statement")]
+            requests.post(f"{API}/applications/{app_id}/documents", files=files, data=data, headers=auth)
+        r = requests.post(f"{API}/applications/{app_id}/decision", headers=auth)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["decision"] == "reject"
+        pe = d.get("policy_evaluation") or {}
+        triggered = set(pe.get("triggered", []))
+        # At least one critical failure among the expected ones
+        assert triggered.intersection({"POL-FOIR-004", "POL-BUREAU-007", "POL-ELIG-003"})
+        # Audit events include the 4 phase-1 events
+        audit = requests.get(f"{API}/applications/{app_id}/audit", headers=auth).json()
+        events = [e["event"] for e in audit]
+        for req in ["Credit Brain Completed", "Policy Evaluated", "Decision Generated", "Credit Memo Generated"]:
+            assert req in events, f"missing audit: {req}"
 
 
 # --- use_ai flag on decision (new) ---

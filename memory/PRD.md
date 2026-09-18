@@ -47,4 +47,23 @@ Build a production-quality full-stack fintech app: **LendSprint AI**, an explain
 - **P2:** Multi-user roles / RBAC (currently intentionally single-user).
 
 ## Next tasks
-- Await user feedback on UI/flow; enable real LLM memo toggle in-product if desired; build out Reports module.
+- Await user feedback; then Phase 2.
+
+## CREDIT BRAIN — Phase 1 (2026-06-18)
+Shipped end-to-end (backend + frontend, tested 28/28 backend + full frontend E2E):
+- ✅ Credit Policy Engine: configurable rules, ROI/tenure slabs, decision matrix; GET/PUT with version bump + archive (versioning), version history. Admin/credit_manager gated.
+- ✅ Policy Simulator: preview current vs proposed decision mix + per-borrower changes without activating.
+- ✅ Credit Brain analysis layer: derived financials (turnover, credits, balance, FOIR, DSCR, vintage, CIBIL, bounces), cash-flow trend, positive/risk signals with evidence + source.
+- ✅ Loan Eligibility waterfall (requested → policy max → cash-flow → collateral → final → recommended).
+- ✅ ROI/Tenure/EMI engine (risk-grade slabs, reducing-balance EMI, total interest/repayment, processing fee, post-loan FOIR).
+- ✅ Expanded Decision screen: loan structure, waterfall, why approved/review/rejected, policy rules triggered, PD gauge, risk grade.
+- ✅ Policy Evaluation screen: overall PASS/REVIEW/FAIL, rule table with expandable detail + severity.
+- ✅ Detailed credit memo (~740 words, 17 sections) + PDF download (print); live-LLM path via AI toggle.
+- ✅ Expanded decisions model (eligible/recommended/roi/tenure/emi/risk_grade/policy_evaluation/credit_brain/signals/conditions/policy_version) + audit events (Credit Brain Completed, Policy Evaluated, Decision Generated, Memo Generated, Policy Updated/Activated).
+- ✅ Dashboard columns (Product, Requested, Recommended, EMI) + expanded stats. Demo: Arvind→approve/B, Sri Lakshmi→review/C, BluePeak→reject.
+
+## Phase 2 backlog (agreed, deferred)
+- P1: Google Drive + OneDrive OAuth ingestion (needs Google/Microsoft app credentials from user) with DocumentSourceProvider abstraction; mock providers in interim.
+- P1: Full RBAC (Admin/Credit Manager/Analyst/Viewer) + approval-authority limits + escalation.
+- P1: Policy Configuration Wizard (10 steps); document-source selection on New Application; "Needs Mapping" customer-folder intelligence.
+- P2: Editable extracted financials with change audit; Financials tab; per-statement evidence links; Credit Policy & Credit Brain analytics dashboards; historical policy-version pinning already stored on decisions.

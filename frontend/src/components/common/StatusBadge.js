@@ -33,16 +33,19 @@ export function DecisionBadge({ decision, size = "sm", className }) {
 }
 
 export function StatusBadge({ status }) {
-  const decided = status === "decided";
+  const MAP = {
+    pending: ["Pending", "bg-blue-50 text-blue-700 border-blue-200", "bg-blue-500"],
+    review: ["Review", "bg-amber-50 text-amber-700 border-amber-200", "bg-amber-500"],
+    approved: ["Approved", "bg-emerald-50 text-emerald-700 border-emerald-200", "bg-emerald-500"],
+    rejected: ["Rejected", "bg-red-50 text-red-700 border-red-200", "bg-red-500"],
+    escalated: ["Escalated", "bg-violet-50 text-violet-700 border-violet-200", "bg-violet-500"],
+    decided: ["Decided", "bg-slate-50 text-slate-700 border-slate-200", "bg-slate-500"],
+  };
+  const [label, cls, dot] = MAP[status] || MAP.pending;
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium",
-        decided ? "bg-slate-50 text-slate-700 border-slate-200" : "bg-blue-50 text-blue-700 border-blue-200"
-      )}
-    >
-      <span className={cn("h-1.5 w-1.5 rounded-full", decided ? "bg-slate-500" : "bg-blue-500")} />
-      {decided ? "Decided" : "Pending"}
+    <span className={cn("inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium", cls)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
+      {label}
     </span>
   );
 }

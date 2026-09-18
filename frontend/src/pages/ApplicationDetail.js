@@ -90,7 +90,8 @@ export default function ApplicationDetail() {
       const [dec] = await Promise.all([runDecision(id, useAi), sleep(2500)]);
       clearInterval(timer);
       setStepIdx(6);
-      setData((d) => ({ ...d, decision: dec, application: { ...d.application, status: "decided" } }));
+      const newStatus = { approve: "approved", review: "review", reject: "rejected" }[dec.decision] || "decided";
+      setData((d) => ({ ...d, decision: dec, application: { ...d.application, status: newStatus } }));
       const a = await getAuditTrail(id);
       setAudit(a);
       toast.success(useAi ? "Decision generated · AI memo drafted" : "Decision generated");
