@@ -78,6 +78,11 @@ export function Header() {
             <DropdownMenuLabel>
               <div className="text-[13px] font-medium text-foreground">{user?.name}</div>
               <div className="text-[12px] text-muted-foreground font-normal truncate">{user?.email}</div>
+              {user?.role && (
+                <div className="mt-1.5 inline-flex items-center rounded border border-accent-foreground/20 bg-accent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-foreground">
+                  {user.role.replace("_", " ")}
+                </div>
+              )}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem data-testid="logout-btn" onClick={() => { signOut(); navigate("/login"); }}>

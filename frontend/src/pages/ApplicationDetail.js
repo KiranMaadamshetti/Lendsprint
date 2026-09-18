@@ -35,6 +35,8 @@ import {
   ArrowLeft, Play, RotateCw, FileText, Download, Trash2, UploadCloud, Loader2, Plus, Eye, Sparkles,
 } from "lucide-react";
 
+import { getMyAuthority, applicationAction } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export default function ApplicationDetail() {
@@ -50,6 +52,29 @@ export default function ApplicationDetail() {
   const [stepIdx, setStepIdx] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [useAi, setUseAi] = useState(false);
+  const { user } = useAuth();
+  const [authority, setAuthority] = useState(null);
+  const [acting, setActing] = useState("");
+
+  useEffect(() => { getMyAuthority().then(setAuthority).catch(() => {}); }, []);
+
+  const perms = new Set(authority?.permissions || []);
+  const maxAuth = authority?.max_authority ?? 0;
+
+  const doAction = async (action) => {
+    setActing(action);
+    try {
+      const res = await applicationAction(id, { action });
+      setData((d) => ({ ...d, application: { ...d.application, status: res.status } }));
+      const a = await getAuditTrail(id);
+      setAudit(a);
+      toast.success(res.event);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setActing("");
+    }
+  };
 
   // override dialog
   const [ovOpen, setOvOpen] = useState(false);
@@ -254,6 +279,36 @@ export default function ApplicationDetail() {
           </div>
         ))}
       </div>
+
+      {/* Committee action bar */}
+      {decision && (perms.has("approve") || perms.has("review")) && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3" data-testid="committee-bar">
+          <div className="text-[12px] text-muted-foreground">
+            {decision.required_authority && (
+              <>Required approval authority: <span className="font-medium text-foreground">{decision.required_authority}</span>. </>
+            )}
+            {perms.has("approve") && decision.recommended_amount > maxAuth && (
+              <span className="text-amber-700 font-medium" data-testid="escalation-note">Escalation required — exceeds your approval authority.</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {perms.has("review") && (
+              <Button size="sm" variant="outline" disabled={!!acting} onClick={() => doAction("send_review")} data-testid="action-send-review">Send for Review</Button>
+            )}
+            {perms.has("escalate") && (
+              <Button size="sm" variant="outline" disabled={!!acting} onClick={() => doAction("escalate")} data-testid="action-escalate">Escalate</Button>
+            )}
+            {perms.has("reject") && (
+              <Button size="sm" variant="outline" className="border-red-200 text-red-700 hover:bg-red-50" disabled={!!acting} onClick={() => doAction("reject")} data-testid="action-reject">Reject</Button>
+            )}
+            {perms.has("approve") && (
+              <Button size="sm" disabled={!!acting || decision.recommended_amount > maxAuth} onClick={() => doAction("approve")} data-testid="action-approve">
+                {acting === "approve" ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />Approving…</> : "Approve"}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="mt-6">

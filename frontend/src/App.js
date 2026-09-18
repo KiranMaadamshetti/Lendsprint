@@ -9,6 +9,7 @@ import NewApplication from "@/pages/NewApplication";
 import ApplicationDetail from "@/pages/ApplicationDetail";
 import Reports from "@/pages/Reports";
 import CreditPolicy from "@/pages/CreditPolicy";
+import PolicyWizard from "@/pages/PolicyWizard";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -37,6 +38,7 @@ function App() {
             <Route path="/applications/:id" element={<ProtectedRoute><ApplicationDetail /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
             <Route path="/credit-policy" element={<ProtectedRoute><CreditPolicy /></ProtectedRoute>} />
+            <Route path="/credit-policy/wizard" element={<ProtectedRoute><PolicyWizard /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </BrowserRouter>

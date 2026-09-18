@@ -76,4 +76,8 @@ export const simulatePolicy = (payload) => client.post("/credit-policy/simulate"
 export const getCreditBrain = (id) => client.get(`/credit-brain/${id}`).then((r) => r.data);
 export const getPolicyEvaluation = (id) => client.get(`/applications/${id}/policy-evaluation`).then((r) => r.data);
 
+// Roles & committee actions
+export const getMyAuthority = () => client.get("/me/authority").then((r) => r.data);
+export const applicationAction = (id, payload) => client.post(`/applications/${id}/action`, payload).then((r) => r.data);
+
 export default client;

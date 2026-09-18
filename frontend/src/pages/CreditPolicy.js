@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { getCreditPolicy, updateCreditPolicy, simulatePolicy, getPolicyVersions, apiErrorMessage } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -7,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DecisionBadge } from "@/components/common/StatusBadge";
-import { Save, FlaskConical, ScrollText, Loader2 } from "lucide-react";
+import { Save, FlaskConical, ScrollText, Loader2, Wand2, ShieldCheck } from "lucide-react";
 
 const RULE_FIELDS = [
   ["max_foir", "Max FOIR", "0-1"],
@@ -21,6 +22,7 @@ const RULE_FIELDS = [
 
 export default function CreditPolicy() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isAdmin = ["admin", "credit_manager"].includes(user?.role);
   const [policy, setPolicy] = useState(null);
   const [versions, setVersions] = useState([]);
@@ -76,9 +78,14 @@ export default function CreditPolicy() {
           <p className="mt-0.5 text-[13px] text-muted-foreground">Configurable lending rules that power every decision</p>
         </div>
         {isAdmin && (
-          <Button size="sm" onClick={save} disabled={saving} data-testid="save-policy-btn">
-            {saving ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />Saving…</> : <><Save className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Save &amp; Activate</>}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => navigate("/credit-policy/wizard")} data-testid="open-wizard-btn">
+              <Wand2 className="mr-1.5 h-4 w-4" strokeWidth={1.8} />New policy (Wizard)
+            </Button>
+            <Button size="sm" onClick={save} disabled={saving} data-testid="save-policy-btn">
+              {saving ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />Saving…</> : <><Save className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Save &amp; Activate</>}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -157,6 +164,26 @@ export default function CreditPolicy() {
               )) : <div className="text-[12px] text-muted-foreground">No decision changes under the proposed thresholds.</div>}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Approval authority */}
+      <div className="mt-4 rounded-lg border border-border bg-card p-5" data-testid="approval-authority">
+        <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-accent-foreground" strokeWidth={1.8} /><h3 className="text-[14px] font-semibold text-foreground">Approval Authority &amp; Escalation</h3></div>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">Recommended amounts above a role's limit require escalation before approval.</p>
+        <div className="mt-3 overflow-x-auto thin-scroll">
+          <table className="w-full min-w-[420px] text-left">
+            <thead><tr className="border-b border-border">{["Role", "From", "Up to"].map((h) => <th key={h} className="label-eyebrow px-3 py-2">{h}</th>)}</tr></thead>
+            <tbody>
+              {(policy.approval_authority || []).map((a) => (
+                <tr key={a.role} className="border-b border-border last:border-0">
+                  <td className="px-3 py-2 text-[13px] font-medium text-foreground">{a.label || a.role}</td>
+                  <td className="px-3 py-2 tnum text-[13px] text-muted-foreground">₹{Number(a.min).toLocaleString("en-IN")}</td>
+                  <td className="px-3 py-2 tnum text-[13px] text-foreground">₹{Number(a.max).toLocaleString("en-IN")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 

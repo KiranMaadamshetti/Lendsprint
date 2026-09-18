@@ -135,6 +135,11 @@ class OverrideIn(BaseModel):
         return v
 
 
+class ActionIn(BaseModel):
+    action: Literal["send_review", "approve", "reject", "escalate"]
+    comment: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Decision engine (mock)
 # ---------------------------------------------------------------------------
@@ -317,6 +322,11 @@ DEFAULT_POLICY = {
     "tenure_rules": {"A": 60, "B": 48, "C": 36},
     "decision_matrix": {"approve_pd_max": 0.25, "review_pd_max": 0.40},
     "processing_fee_pct": 1.0,
+    "approval_authority": [
+        {"role": "credit_analyst", "label": "Credit Analyst", "min": 0, "max": 1000000},
+        {"role": "credit_manager", "label": "Credit Manager", "min": 1000000, "max": 5000000},
+        {"role": "admin", "label": "Senior Credit / Admin", "min": 0, "max": 1000000000},
+    ],
     "required_documents": ["Bank Statement", "ITR", "GST Returns", "KYC", "Existing Loan Statement"],
     "conditions": [
         "Completion of KYC verification for borrower and promoters.",
@@ -340,7 +350,32 @@ async def get_active_policy() -> dict:
     if not pol:
         pol = _mk_policy_doc()
         await db.credit_policies.insert_one(dict(pol))
+    if "approval_authority" not in pol:
+        pol["approval_authority"] = DEFAULT_POLICY["approval_authority"]
     return pol
+
+
+ROLE_PERMS = {
+    "admin": {"policy_edit", "approve", "reject", "escalate", "review", "analyse"},
+    "credit_manager": {"policy_edit", "approve", "reject", "escalate", "review", "analyse"},
+    "credit_analyst": {"review", "analyse"},
+    "viewer": set(),
+}
+
+
+def authority_for_amount(amount: float, policy: dict) -> str:
+    slabs = sorted(policy.get("approval_authority", []), key=lambda s: s["max"])
+    for s in slabs:
+        if amount <= s["max"]:
+            return s.get("label", s["role"])
+    return "Senior Credit / Admin"
+
+
+def user_max_authority(role: str, policy: dict) -> float:
+    vals = [s["max"] for s in policy.get("approval_authority", []) if s["role"] == role]
+    if vals:
+        return max(vals)
+    return 1000000000 if role == "admin" else 0
 
 
 def emi_amount(principal: float, annual_roi: float, months: int) -> float:
@@ -831,11 +866,13 @@ async def update_credit_policy(body: dict = Body(...), user: dict = Depends(get_
             merged = dict(active.get(k, {}))
             merged.update(body[k])
             new[k] = merged
-    for k in ("roi_rules", "required_documents", "conditions"):
+    for k in ("roi_rules", "required_documents", "conditions", "approval_authority"):
         if body.get(k) is not None:
             new[k] = body[k]
     if body.get("policy_name"):
         new["policy_name"] = body["policy_name"]
+    if body.get("product_type"):
+        new["product_type"] = body["product_type"]
     if body.get("effective_from"):
         new["effective_from"] = body["effective_from"]
     # bump version
@@ -1033,6 +1070,7 @@ async def run_decision(app_id: str, options: DecisionOptions = DecisionOptions()
         "application_id": app_id,
         **full,
         "model_decision": full["decision"],
+        "required_authority": authority_for_amount(full["recommended_amount"], policy),
         "override": None,
         "memo_text": memo_text,
         "memo_source": memo_source,
@@ -1155,6 +1193,45 @@ async def reports_summary(user: dict = Depends(get_current_user)):
     }
 
 
+@api_router.get("/me/authority")
+async def my_authority(user: dict = Depends(get_current_user)):
+    policy = await get_active_policy()
+    role = user.get("role", "viewer")
+    return {"role": role, "max_authority": user_max_authority(role, policy),
+            "permissions": sorted(ROLE_PERMS.get(role, set())),
+            "approval_authority": policy.get("approval_authority", [])}
+
+
+@api_router.post("/applications/{app_id}/action")
+async def application_action(app_id: str, body: ActionIn, user: dict = Depends(get_current_user)):
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    role = user.get("role", "viewer")
+    perms = ROLE_PERMS.get(role, set())
+    need = {"send_review": "review", "approve": "approve", "reject": "reject", "escalate": "escalate"}[body.action]
+    if need not in perms:
+        raise HTTPException(status_code=403, detail=f"Your role ({role}) is not permitted to {body.action.replace('_', ' ')}")
+    decision = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
+    policy = await get_active_policy()
+    if body.action == "approve":
+        if not decision:
+            raise HTTPException(status_code=400, detail="Run the decision before approving")
+        amount = decision.get("recommended_amount", 0)
+        if amount > user_max_authority(role, policy):
+            raise HTTPException(status_code=403, detail=f"Escalation required: this amount exceeds your approval authority. Escalate to {authority_for_amount(amount, policy)}.")
+    status_map = {"send_review": "review", "approve": "approved", "reject": "rejected", "escalate": "escalated"}
+    new_status = status_map[body.action]
+    await db.applications.update_one({"id": app_id}, {"$set": {"status": new_status}})
+    event = {"send_review": "Sent For Review", "approve": "Application Approved",
+             "reject": "Application Rejected", "escalate": "Application Escalated"}[body.action]
+    await write_audit(app_id, event, user.get("name", role),
+                      {"role": role, "status": new_status, "comment": body.comment,
+                       "amount": decision.get("recommended_amount") if decision else None})
+    return {"status": new_status, "event": event}
+
+
+
 # ---------------------------------------------------------------------------
 # Demo seed
 # ---------------------------------------------------------------------------
@@ -1216,6 +1293,7 @@ async def seed_demo(user: dict = Depends(get_current_user)):
             await db.decisions.insert_one({
                 "id": str(uuid.uuid4()), "application_id": app_id, **full,
                 "model_decision": full["decision"], "override": None,
+                "required_authority": authority_for_amount(full["recommended_amount"], policy),
                 "memo_text": memo, "memo_source": "template", "created_at": iso(dec_dt),
             })
             new_status = {"approve": "approved", "review": "review", "reject": "rejected"}.get(full["decision"], "decided")
@@ -1260,6 +1338,17 @@ async def startup():
         logger.info("Seeded admin user")
     elif not verify_password(admin_password, existing["password_hash"]):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
+    # seed additional demo roles
+    demo_users = [
+        ("manager@lendsprint.ai", "Manager@2026", "credit_manager", "Credit Manager"),
+        ("analyst@lendsprint.ai", "Analyst@2026", "credit_analyst", "Credit Analyst"),
+        ("viewer@lendsprint.ai", "Viewer@2026", "viewer", "Portfolio Viewer"),
+    ]
+    for email, pw, role, name in demo_users:
+        if not await db.users.find_one({"email": email}):
+            await db.users.insert_one({"id": str(uuid.uuid4()), "email": email,
+                                       "password_hash": hash_password(pw), "name": name,
+                                       "role": role, "created_at": iso(now_utc())})
     await get_active_policy()
     logger.info(f"LendSprint AI started. MOCK_MODE={MOCK_MODE}")
 
