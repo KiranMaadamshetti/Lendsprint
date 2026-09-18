@@ -73,6 +73,10 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## Decision Trace (2026-06-18)
+Shipped + tested (iteration_6, frontend-only, 95% — no bugs):
+- ✅ New "Trace" tab on Application Detail: interactive 6-stage flow Documents → Extraction → Credit Brain → Policy → Structuring → Decision. Clickable nodes with status dots; each opens a detail panel (docs list, extracted financials, PD/grade/FOIR/DSCR + signals, policy rule table, eligibility waterfall + terms, final decision). Built entirely from existing GET /api/applications/{id} data; empty state prompts Run Decision. Component: DecisionTraceTab.js.
+
 ## Ask Credit Brain + Evidence Chain (2026-06-18)
 Shipped + tested (iteration_5: 6/6 backend + full frontend E2E, 100%):
 - ✅ Ask Credit Brain: new "Ask Brain" tab on Application Detail. Application-grounded LLM assistant (Emergent LLM key, OpenAI gpt-5.4 via emergentintegrations, LIVE not mocked). Preset chips (why approved / why this amount / key risks / rules triggered) + free-text. Answers cite figures & policy rule IDs; refuses out-of-scope questions. Chat persisted in `brain_chats` collection; history rehydrates on reload. Endpoints: POST /api/applications/{id}/ask {question, session_id?}, GET /api/applications/{id}/chat.

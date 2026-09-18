@@ -22,7 +22,7 @@ function Row({ k, v }) {
   );
 }
 
-export function DecisionTraceTab({ application, documents, decision, onRun }) {
+export function DecisionTraceTab({ application, documents = [], decision, onRun }) {
   const [active, setActive] = useState("documents");
 
   if (!decision) {
