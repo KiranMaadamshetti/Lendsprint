@@ -19,6 +19,7 @@ import { MemoTab } from "@/components/application/MemoTab";
 import { AuditTab } from "@/components/application/AuditTab";
 import { CreditBrainTab } from "@/components/application/CreditBrainTab";
 import { PolicyTab } from "@/components/application/PolicyTab";
+import { AskBrainTab } from "@/components/application/AskBrainTab";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -320,6 +321,7 @@ export default function ApplicationDetail() {
             ["policy", "Policy"],
             ["decision", "Decision"],
             ["memo", "Credit Memo"],
+            ["ask", "Ask Brain"],
             ["audit", "Audit Trail"],
           ].map(([v, label]) => (
             <TabsTrigger
@@ -465,6 +467,11 @@ export default function ApplicationDetail() {
         {/* Credit Memo */}
         <TabsContent value="memo" className="mt-5">
           <MemoTab application={application} decision={decision} onRun={runDecisionFlow} />
+        </TabsContent>
+
+        {/* Ask Brain */}
+        <TabsContent value="ask" className="mt-5">
+          <AskBrainTab applicationId={id} />
         </TabsContent>
 
         {/* Audit */}

@@ -1,6 +1,8 @@
 import { PdGauge } from "@/components/common/PdGauge";
 import { Button } from "@/components/ui/button";
 import { formatLakh, formatDateTime } from "@/lib/format";
+import { useState } from "react";
+import { EvidenceSheet } from "@/components/application/EvidencePanel";
 import { FileSearch, Loader2, TrendingUp, TrendingDown, ArrowRight, Wallet, Scale, Coins, ShieldAlert, PenLine } from "lucide-react";
 
 const STEPS = [
@@ -70,23 +72,32 @@ function EmptyDecision({ onRun, hasDocuments }) {
   );
 }
 
-function CashCard({ icon: Icon, label, value, accent }) {
+function CashCard({ icon: Icon, label, value, accent, evidence, onOpen }) {
+  const clickable = !!evidence;
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <button
+      type="button"
+      disabled={!clickable}
+      onClick={() => clickable && onOpen({ ...evidence, value })}
+      data-testid={`cashcard-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+      className={`w-full text-left rounded-lg border border-border bg-card p-4 transition-colors ${clickable ? "hover:border-accent-foreground/40 hover:bg-accent/40 cursor-pointer" : "cursor-default"}`}
+    >
       <div className="flex items-center gap-2">
         <Icon className={`h-4 w-4 ${accent}`} strokeWidth={1.8} />
         <span className="label-eyebrow">{label}</span>
       </div>
       <div className="metric-num mt-2 text-[24px] font-semibold text-foreground">{value}</div>
-    </div>
+    </button>
   );
 }
 
 export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments, onOverrideClick }) {
+  const [evItem, setEvItem] = useState(null);
   if (running) return <Processing stepIdx={stepIdx} />;
   if (!decision) return <EmptyDecision onRun={onRun} hasDocuments={hasDocuments} />;
 
   const cf = decision.cash_flow_summary;
+  const ev = decision.credit_brain?.evidence || {};
   const override = decision.override;
   const gradeColor = decision.risk_grade === "A" ? "text-emerald-600" : decision.risk_grade === "B" ? "text-accent-foreground" : "text-amber-600";
 
@@ -191,9 +202,9 @@ export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments, o
       <div>
         <h3 className="text-[14px] font-semibold text-foreground">Cash Flow Summary</h3>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <CashCard icon={Wallet} label="Monthly Income" value={formatLakh(cf.income)} accent="text-emerald-600" />
-          <CashCard icon={Coins} label="Monthly Obligations" value={formatLakh(cf.obligations)} accent="text-amber-600" />
-          <CashCard icon={Scale} label="Net Cash Flow" value={formatLakh(cf.net)} accent="text-accent-foreground" />
+          <CashCard icon={Wallet} label="Monthly Income" value={formatLakh(cf.income)} accent="text-emerald-600" evidence={ev.avg_monthly_credits} onOpen={setEvItem} />
+          <CashCard icon={Coins} label="Monthly Obligations" value={formatLakh(cf.obligations)} accent="text-amber-600" evidence={ev.monthly_obligations} onOpen={setEvItem} />
+          <CashCard icon={Scale} label="Net Cash Flow" value={formatLakh(cf.net)} accent="text-accent-foreground" evidence={ev.net_cash_flow} onOpen={setEvItem} />
         </div>
       </div>
 
@@ -227,6 +238,9 @@ export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments, o
           })}
         </div>
       </div>
+
+      <EvidenceSheet item={evItem} onClose={() => setEvItem(null)} />
+
     </div>
   );
 }

@@ -406,6 +406,88 @@ def risk_grade_and_roi(pd_score: float, policy: dict):
     return last["grade"], last["roi"]
 
 
+def _ev_conf(seed: int, salt: int) -> float:
+    return round(0.90 + ((seed >> salt) % 9) / 100.0, 2)
+
+
+def _ev_page(seed: int, salt: int, mx: int = 6) -> str:
+    return f"p.{1 + ((seed >> salt) % mx)}"
+
+
+def build_evidence(f: dict, seed: int) -> dict:
+    """Deterministic source-attribution + calculation trace for each financial figure."""
+    def L(v):
+        return f"₹{lakh(v)} L"
+
+    return {
+        "annual_turnover": {
+            "label": "Annual Turnover", "formula": "Avg monthly credits × 12 × 0.94 (GST-adjusted)",
+            "calculation": f"{L(f['avg_monthly_credits'])} × 12 × 0.94 = {L(f['annual_turnover'])}",
+            "inputs": [{"label": "Avg monthly credits", "value": L(f['avg_monthly_credits'])}, {"label": "GST adjustment", "value": "0.94"}],
+            "source": "GST Returns (GSTR-3B)", "page": _ev_page(seed, 1), "confidence": _ev_conf(seed, 1)},
+        "avg_monthly_credits": {
+            "label": "Avg Monthly Credits", "formula": "Total credits ÷ months in statement",
+            "calculation": f"Averaged over {f['banking_history_months']}-month banking window = {L(f['avg_monthly_credits'])}",
+            "inputs": [{"label": "Banking window", "value": f"{f['banking_history_months']} months"}],
+            "source": "Bank Statement", "page": _ev_page(seed, 2), "confidence": _ev_conf(seed, 2)},
+        "avg_monthly_balance": {
+            "label": "Avg Monthly Balance", "formula": "Sum of daily closing balances ÷ days",
+            "calculation": f"Average maintained balance = {L(f['avg_monthly_balance'])}",
+            "inputs": [{"label": "Basis", "value": "Daily closing balance"}],
+            "source": "Bank Statement", "page": _ev_page(seed, 3), "confidence": _ev_conf(seed, 3)},
+        "net_cash_flow": {
+            "label": "Net Cash Flow", "formula": "Avg monthly credits − Monthly obligations",
+            "calculation": f"{L(f['avg_monthly_credits'])} − {L(f['monthly_obligations'])} = {L(f['net_cash_flow'])}",
+            "inputs": [{"label": "Avg monthly credits", "value": L(f['avg_monthly_credits'])}, {"label": "Monthly obligations", "value": L(f['monthly_obligations'])}],
+            "source": "Bank Statement + Existing Loan Statement", "page": _ev_page(seed, 4), "confidence": _ev_conf(seed, 4)},
+        "monthly_obligations": {
+            "label": "Monthly Obligations", "formula": "Existing EMIs + recurring debits",
+            "calculation": f"Aggregated obligations = {L(f['monthly_obligations'])}",
+            "inputs": [{"label": "Existing EMI", "value": f"₹{f['existing_emi']:,}"}],
+            "source": "Existing Loan Statement", "page": _ev_page(seed, 5), "confidence": _ev_conf(seed, 5)},
+        "existing_emi": {
+            "label": "Existing EMI", "formula": "Sum of active loan instalments",
+            "calculation": f"Detected active EMI debits = ₹{f['existing_emi']:,}/month",
+            "inputs": [{"label": "Basis", "value": "Recurring loan debits"}],
+            "source": "Existing Loan Statement", "page": _ev_page(seed, 6), "confidence": _ev_conf(seed, 6)},
+        "foir_before": {
+            "label": "FOIR (pre-loan)", "formula": "Monthly obligations ÷ Avg monthly credits",
+            "calculation": f"{L(f['monthly_obligations'])} ÷ {L(f['avg_monthly_credits'])} = {round(f['foir_before']*100,1)}%",
+            "inputs": [{"label": "Monthly obligations", "value": L(f['monthly_obligations'])}, {"label": "Avg monthly credits", "value": L(f['avg_monthly_credits'])}],
+            "source": "Bank Statement + Existing Loan Statement", "page": _ev_page(seed, 7), "confidence": _ev_conf(seed, 7)},
+        "dscr": {
+            "label": "DSCR", "formula": "Net cash flow ÷ Existing EMI",
+            "calculation": f"{L(f['net_cash_flow'])} ÷ ₹{f['existing_emi']:,} = {f['dscr']}x",
+            "inputs": [{"label": "Net cash flow", "value": L(f['net_cash_flow'])}, {"label": "Existing EMI", "value": f"₹{f['existing_emi']:,}"}],
+            "source": "Bank Statement + Existing Loan Statement", "page": _ev_page(seed, 8), "confidence": _ev_conf(seed, 8)},
+        "banking_history_months": {
+            "label": "Banking History", "formula": "Span of statement period",
+            "calculation": f"{f['banking_history_months']} months of continuous statements reviewed",
+            "inputs": [{"label": "Statement span", "value": f"{f['banking_history_months']} months"}],
+            "source": "Bank Statement", "page": _ev_page(seed, 9), "confidence": _ev_conf(seed, 9)},
+        "business_vintage_months": {
+            "label": "Business Vintage", "formula": "Months since business registration",
+            "calculation": f"Registration date to review date = {f['business_vintage_months']} months",
+            "inputs": [{"label": "Vintage", "value": f"{f['business_vintage_months']} months"}],
+            "source": "GST Registration / ITR", "page": _ev_page(seed, 10), "confidence": _ev_conf(seed, 10)},
+        "cibil": {
+            "label": "CIBIL", "formula": "Bureau-reported consumer/commercial score",
+            "calculation": f"Bureau score as pulled = {f['cibil']}",
+            "inputs": [{"label": "Score", "value": str(f['cibil'])}],
+            "source": "Credit Bureau Report", "page": _ev_page(seed, 11, 2), "confidence": _ev_conf(seed, 11)},
+        "cheque_bounces": {
+            "label": "Cheque Bounces", "formula": "Count of returned cheques in window",
+            "calculation": f"{f['cheque_bounces']} cheque return(s) across {f['banking_history_months']} months",
+            "inputs": [{"label": "Returns", "value": str(f['cheque_bounces'])}],
+            "source": "Bank Statement", "page": _ev_page(seed, 12), "confidence": _ev_conf(seed, 12)},
+        "nach_bounces": {
+            "label": "NACH Bounces", "formula": "Count of failed NACH mandates in window",
+            "calculation": f"{f['nach_bounces']} NACH return(s) across {f['banking_history_months']} months",
+            "inputs": [{"label": "Returns", "value": str(f['nach_bounces'])}],
+            "source": "Bank Statement", "page": _ev_page(seed, 13), "confidence": _ev_conf(seed, 13)},
+    }
+
+
 def credit_brain(application: dict) -> dict:
     """Derive structured financial evidence + signals (mock intelligence layer)."""
     borrower = application["borrower_name"]
@@ -466,6 +548,14 @@ def credit_brain(application: dict) -> dict:
         "cash_flow_trend": trend,
         "positive_signals": positive,
         "risk_signals": risk,
+        "evidence": build_evidence({
+            "revenue": revenue, "annual_credits": annual_credits, "avg_monthly_credits": income,
+            "avg_monthly_balance": avg_balance, "existing_emi": existing_emi,
+            "monthly_obligations": obligations, "net_cash_flow": net, "foir_before": foir_before,
+            "dscr": dscr, "banking_history_months": banking_months, "cheque_bounces": cheque_bounces,
+            "nach_bounces": nach_bounces, "business_vintage_months": vintage, "cibil": cibil,
+            "annual_turnover": revenue,
+        }, seed),
     }
 
 
@@ -1230,6 +1320,87 @@ async def application_action(app_id: str, body: ActionIn, user: dict = Depends(g
                        "amount": decision.get("recommended_amount") if decision else None})
     return {"status": new_status, "event": event}
 
+
+
+class AskIn(BaseModel):
+    question: str = Field(..., min_length=1, max_length=500)
+    session_id: Optional[str] = None
+
+
+def build_ask_context(application: dict, full: dict) -> str:
+    f = full["credit_brain"]["financials"]
+    pe = full["policy_evaluation"]
+    lines = [
+        f"Borrower: {application['borrower_name']} | Product: {LOAN_TYPE_LABEL.get(application['loan_type'], application['loan_type'])} | Reference: {application.get('reference', '-')}",
+        f"Decision: {full['decision'].upper()} | Risk grade: {full['risk_grade']} | PD: {round(full['pd_score']*100,1)}%",
+        f"Requested: ₹{lakh(full['requested_amount'])}L | Eligible: ₹{lakh(full['eligible_amount'])}L | Recommended: ₹{lakh(full['recommended_amount'])}L",
+        f"ROI: {full['roi']}% p.a. | Tenure: {full['tenure_months']} months | EMI: ₹{full['emi']:,} | Post-loan FOIR: {round(full['post_loan_foir']*100,1)}%",
+        f"Financials: annual turnover ₹{lakh(f['annual_turnover'])}L, avg monthly credits ₹{lakh(f['avg_monthly_credits'])}L, avg balance ₹{lakh(f['avg_monthly_balance'])}L, net cash flow ₹{lakh(f['net_cash_flow'])}L, existing EMI ₹{f['existing_emi']:,}, pre-loan FOIR {round(f['foir_before']*100,1)}%, DSCR {f['dscr']}x, CIBIL {f['cibil']}, business vintage {f['business_vintage_months']} months, banking history {f['banking_history_months']} months, cheque bounces {f['cheque_bounces']}, NACH bounces {f['nach_bounces']}, industry {f.get('industry','-')}",
+        "Eligibility waterfall: " + "; ".join(f"{w['label']} ₹{lakh(w['value'])}L" for w in full['eligibility_waterfall']),
+        f"Policy {full['policy_version']} evaluation — overall {pe['overall']}, {pe['passed']}/{pe['rules_evaluated']} passed, triggered: {', '.join(pe['triggered']) or 'none'}.",
+        "Policy rules: " + "; ".join(f"{r['id']} {r['name']}: actual {r['actual']} {r['operator']} {r['threshold']} -> {r['result']}" for r in pe['rules']),
+        "Positive signals: " + ("; ".join(s['label'] for s in full['positive_signals']) or "none"),
+        "Risk signals: " + ("; ".join(s['label'] for s in full['risk_signals']) or "none"),
+    ]
+    return "\n".join(lines)
+
+
+async def run_brain_chat(session_id: str, context: str, history: list, question: str) -> str:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    system = (
+        "You are Credit Brain, an assistant for an Indian NBFC credit team. Answer ONLY using the "
+        "application assessment data provided below. Be concise (2-5 sentences or short bullets) and "
+        "professional. Always cite the specific figures or policy rule IDs you used, e.g. 'DSCR 1.6x', "
+        "'post-loan FOIR 52%', 'POL-FOIR-004'. When asked why the recommended amount differs from the "
+        "requested amount, explain the binding constraint in the eligibility waterfall. If a question "
+        "cannot be answered from this data, say you can only answer questions about this application's "
+        "credit assessment. Never invent numbers not present in the data.\n\n"
+        "APPLICATION ASSESSMENT DATA:\n" + context
+    )
+    if history:
+        convo = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in history[-6:])
+        system += "\n\nCONVERSATION SO FAR:\n" + convo
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id, system_message=system).with_model("openai", "gpt-5.4")
+    resp = await chat.send_message(UserMessage(text=question))
+    return (resp if isinstance(resp, str) else str(resp)).strip()
+
+
+@api_router.get("/applications/{app_id}/chat")
+async def get_brain_chat(app_id: str, user: dict = Depends(get_current_user)):
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    msgs = await db.brain_chats.find({"application_id": app_id}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    return msgs
+
+
+@api_router.post("/applications/{app_id}/ask")
+async def ask_brain(app_id: str, body: AskIn, user: dict = Depends(get_current_user)):
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    decision = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
+    if decision and decision.get("credit_brain"):
+        full = decision
+    else:
+        policy = await get_active_policy()
+        full = compute_full_decision(application, policy)
+    context = build_ask_context(application, full)
+    session_id = body.session_id or f"brain-{app_id}"
+    history = await db.brain_chats.find({"application_id": app_id}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    question = body.question.strip()
+    now = iso(now_utc())
+    await db.brain_chats.insert_one({"id": str(uuid.uuid4()), "application_id": app_id, "session_id": session_id,
+                                     "role": "user", "content": question, "created_at": now})
+    try:
+        answer = await run_brain_chat(session_id, context, history, question)
+    except Exception as e:
+        logger.warning(f"Ask Credit Brain failed: {e}")
+        raise HTTPException(status_code=503, detail="Credit Brain assistant is unavailable right now. Please try again.")
+    ans_at = iso(now_utc())
+    await db.brain_chats.insert_one({"id": str(uuid.uuid4()), "application_id": app_id, "session_id": session_id,
+                                     "role": "assistant", "content": answer, "created_at": ans_at})
+    return {"answer": answer, "session_id": session_id, "created_at": ans_at}
 
 
 # ---------------------------------------------------------------------------

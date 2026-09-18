@@ -4,17 +4,9 @@ import { getCreditBrain, apiErrorMessage } from "@/lib/api";
 import { formatINR, formatLakh } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, TrendingDown, ShieldCheck, AlertTriangle, Brain } from "lucide-react";
+import { EvidenceMetric, EvidenceSheet } from "@/components/application/EvidencePanel";
 
 const SEV_DOT = { critical: "bg-red-500", review: "bg-amber-500", warning: "bg-amber-500", info: "bg-emerald-500" };
-
-function Metric({ label, value }) {
-  return (
-    <div className="rounded-md border border-border bg-secondary/40 px-3 py-2">
-      <div className="label-eyebrow">{label}</div>
-      <div className="metric-num mt-1 text-[15px] font-semibold text-foreground">{value}</div>
-    </div>
-  );
-}
 
 function Signal({ s, positive }) {
   return (
@@ -33,6 +25,7 @@ function Signal({ s, positive }) {
 export function CreditBrainTab({ applicationId }) {
   const [brain, setBrain] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [evItem, setEvItem] = useState(null);
 
   useEffect(() => {
     getCreditBrain(applicationId)
@@ -45,32 +38,34 @@ export function CreditBrainTab({ applicationId }) {
   if (!brain) return null;
 
   const f = brain.financials;
+  const ev = brain.evidence || {};
   const maxTrend = Math.max(...brain.cash_flow_trend.map((t) => t.value), 1);
 
   return (
     <div className="space-y-4 animate-fade-up" data-testid="credit-brain-content">
       <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3">
         <Brain className="h-4 w-4 text-accent-foreground" strokeWidth={1.8} />
-        <span className="text-[13px] text-muted-foreground">Credit Brain provides structured evidence only. It does not override the Credit Policy.</span>
+        <span className="text-[13px] text-muted-foreground">Credit Brain provides structured evidence only. Click any figure to trace its source, page and calculation.</span>
       </div>
 
       <div className="rounded-lg border border-border bg-card p-5">
         <h3 className="text-[14px] font-semibold text-foreground">Financial Health</h3>
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          <Metric label="Annual Turnover" value={formatINR(f.annual_turnover)} />
-          <Metric label="Avg Monthly Credits" value={formatLakh(f.avg_monthly_credits)} />
-          <Metric label="Avg Monthly Balance" value={formatLakh(f.avg_monthly_balance)} />
-          <Metric label="Net Cash Flow" value={formatLakh(f.net_cash_flow)} />
-          <Metric label="Existing EMI" value={formatINR(f.existing_emi)} />
-          <Metric label="FOIR (pre-loan)" value={`${(f.foir_before * 100).toFixed(1)}%`} />
-          <Metric label="DSCR" value={`${f.dscr}x`} />
-          <Metric label="Banking History" value={`${f.banking_history_months} mo`} />
-          <Metric label="Business Vintage" value={`${f.business_vintage_months} mo`} />
-          <Metric label="CIBIL" value={f.cibil} />
-          <Metric label="Cheque Bounces" value={f.cheque_bounces} />
-          <Metric label="NACH Bounces" value={f.nach_bounces} />
+          <EvidenceMetric label="Annual Turnover" value={formatINR(f.annual_turnover)} evidence={ev.annual_turnover} onOpen={setEvItem} />
+          <EvidenceMetric label="Avg Monthly Credits" value={formatLakh(f.avg_monthly_credits)} evidence={ev.avg_monthly_credits} onOpen={setEvItem} />
+          <EvidenceMetric label="Avg Monthly Balance" value={formatLakh(f.avg_monthly_balance)} evidence={ev.avg_monthly_balance} onOpen={setEvItem} />
+          <EvidenceMetric label="Net Cash Flow" value={formatLakh(f.net_cash_flow)} evidence={ev.net_cash_flow} onOpen={setEvItem} />
+          <EvidenceMetric label="Existing EMI" value={formatINR(f.existing_emi)} evidence={ev.existing_emi} onOpen={setEvItem} />
+          <EvidenceMetric label="FOIR (pre-loan)" value={`${(f.foir_before * 100).toFixed(1)}%`} evidence={ev.foir_before} onOpen={setEvItem} />
+          <EvidenceMetric label="DSCR" value={`${f.dscr}x`} evidence={ev.dscr} onOpen={setEvItem} />
+          <EvidenceMetric label="Banking History" value={`${f.banking_history_months} mo`} evidence={ev.banking_history_months} onOpen={setEvItem} />
+          <EvidenceMetric label="Business Vintage" value={`${f.business_vintage_months} mo`} evidence={ev.business_vintage_months} onOpen={setEvItem} />
+          <EvidenceMetric label="CIBIL" value={f.cibil} evidence={ev.cibil} onOpen={setEvItem} />
+          <EvidenceMetric label="Cheque Bounces" value={f.cheque_bounces} evidence={ev.cheque_bounces} onOpen={setEvItem} />
+          <EvidenceMetric label="NACH Bounces" value={f.nach_bounces} evidence={ev.nach_bounces} onOpen={setEvItem} />
         </div>
       </div>
+
 
       <div className="rounded-lg border border-border bg-card p-5">
         <h3 className="text-[14px] font-semibold text-foreground">Cash Flow Trend</h3>
@@ -99,6 +94,8 @@ export function CreditBrainTab({ applicationId }) {
           </div>
         </div>
       </div>
+
+      <EvidenceSheet item={evItem} onClose={() => setEvItem(null)} />
     </div>
   );
 }
