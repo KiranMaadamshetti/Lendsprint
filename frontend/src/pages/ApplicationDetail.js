@@ -281,7 +281,7 @@ export default function ApplicationDetail() {
       </div>
 
       {/* Committee action bar */}
-      {decision && (perms.has("approve") || perms.has("review")) && (
+      {decision && (perms.has("approve") || perms.has("review")) && !["approved", "rejected"].includes(application.status) && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3" data-testid="committee-bar">
           <div className="text-[12px] text-muted-foreground">
             {decision.required_authority && (

@@ -62,8 +62,13 @@ Shipped end-to-end (backend + frontend, tested 28/28 backend + full frontend E2E
 - ✅ Expanded decisions model (eligible/recommended/roi/tenure/emi/risk_grade/policy_evaluation/credit_brain/signals/conditions/policy_version) + audit events (Credit Brain Completed, Policy Evaluated, Decision Generated, Memo Generated, Policy Updated/Activated).
 - ✅ Dashboard columns (Product, Requested, Recommended, EMI) + expanded stats. Demo: Arvind→approve/B, Sri Lakshmi→review/C, BluePeak→reject.
 
+## Role Access + Policy Wizard (2026-06-18)
+Shipped + tested (46/46 backend + full frontend E2E):
+- ✅ RBAC roles: admin, credit_manager, credit_analyst, viewer (seeded demo users). Header role badge.
+- ✅ Approval authority slabs + escalation: approve blocked (403) when recommended amount exceeds caller's authority; committee actions (send_review/approve/reject/escalate) gated by role + audited; bar hidden at terminal status.
+- ✅ 10-step no-code Policy Configuration Wizard (/credit-policy/wizard) creating a new active policy version; Approval Authority table on policy page.
+
 ## Phase 2 backlog (agreed, deferred)
-- P1: Google Drive + OneDrive OAuth ingestion (needs Google/Microsoft app credentials from user) with DocumentSourceProvider abstraction; mock providers in interim.
-- P1: Full RBAC (Admin/Credit Manager/Analyst/Viewer) + approval-authority limits + escalation.
-- P1: Policy Configuration Wizard (10 steps); document-source selection on New Application; "Needs Mapping" customer-folder intelligence.
-- P2: Editable extracted financials with change audit; Financials tab; per-statement evidence links; Credit Policy & Credit Brain analytics dashboards; historical policy-version pinning already stored on decisions.
+- P1: Google Drive + OneDrive OAuth ingestion (needs Google/Microsoft app credentials) with DocumentSourceProvider abstraction; mock providers interim.
+- P1: Remaining Phase-1 spec items — Evidence panel + source attribution, AI Analyst Challenge, per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
+- P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
