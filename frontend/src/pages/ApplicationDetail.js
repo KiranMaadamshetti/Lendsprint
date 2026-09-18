@@ -20,6 +20,7 @@ import { AuditTab } from "@/components/application/AuditTab";
 import { CreditBrainTab } from "@/components/application/CreditBrainTab";
 import { PolicyTab } from "@/components/application/PolicyTab";
 import { AskBrainTab } from "@/components/application/AskBrainTab";
+import { DecisionTraceTab } from "@/components/application/DecisionTraceTab";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -320,6 +321,7 @@ export default function ApplicationDetail() {
             ["brain", "Credit Brain"],
             ["policy", "Policy"],
             ["decision", "Decision"],
+            ["trace", "Trace"],
             ["memo", "Credit Memo"],
             ["ask", "Ask Brain"],
             ["audit", "Audit Trail"],
@@ -462,6 +464,11 @@ export default function ApplicationDetail() {
             hasDocuments={documents.length > 0}
             onOverrideClick={openOverride}
           />
+        </TabsContent>
+
+        {/* Decision Trace */}
+        <TabsContent value="trace" className="mt-5">
+          <DecisionTraceTab application={application} documents={documents} decision={decision} onRun={runDecisionFlow} />
         </TabsContent>
 
         {/* Credit Memo */}
