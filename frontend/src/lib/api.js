@@ -68,4 +68,12 @@ export const fetchDocumentBlob = (docId) =>
 // Demo
 export const seedDemoData = () => client.post("/demo/seed").then((r) => r.data);
 
+// Credit policy & brain
+export const getCreditPolicy = () => client.get("/credit-policy").then((r) => r.data);
+export const getPolicyVersions = () => client.get("/credit-policy/versions").then((r) => r.data);
+export const updateCreditPolicy = (payload) => client.put("/credit-policy", payload).then((r) => r.data);
+export const simulatePolicy = (payload) => client.post("/credit-policy/simulate", payload).then((r) => r.data);
+export const getCreditBrain = (id) => client.get(`/credit-brain/${id}`).then((r) => r.data);
+export const getPolicyEvaluation = (id) => client.get(`/applications/${id}/policy-evaluation`).then((r) => r.data);
+
 export default client;

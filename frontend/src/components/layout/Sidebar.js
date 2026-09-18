@@ -14,7 +14,7 @@ import { toast } from "sonner";
 const mainItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, active: true },
   { to: "/applications", label: "Applications", icon: FileText, active: true },
-  { label: "Decisioning", icon: Gauge, active: false },
+  { to: "/credit-policy", label: "Credit Policy", icon: Gauge, active: true },
   { to: "/reports", label: "Reports", icon: BarChart3, active: true },
   { label: "Audit", icon: ShieldCheck, active: false },
 ];

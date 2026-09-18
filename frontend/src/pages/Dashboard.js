@@ -177,8 +177,8 @@ export default function Dashboard() {
           <table className="w-full min-w-[880px] text-left">
             <thead>
               <tr className="border-b border-border">
-                {["Application", "Borrower", "Loan Type", "Requested Amount", "Submitted", "Status", "Decision", "TAT", ""].map((h, i) => (
-                  <th key={i} className={`label-eyebrow px-4 py-2.5 font-semibold ${["Requested Amount", "TAT"].includes(h) ? "text-right" : ""}`}>
+                {["Application", "Borrower", "Product", "Requested", "Recommended", "Status", "Decision", "EMI", ""].map((h, i) => (
+                  <th key={i} className={`label-eyebrow px-4 py-2.5 font-semibold ${["Requested", "Recommended", "EMI"].includes(h) ? "text-right" : ""}`}>
                     {h}
                   </th>
                 ))}
@@ -209,10 +209,10 @@ export default function Dashboard() {
                     <td className="px-4 py-3 text-[13px] text-foreground max-w-[220px] truncate">{a.borrower_name}</td>
                     <td className="px-4 py-3 text-[13px] text-muted-foreground">{LOAN_TYPE_LABEL[a.loan_type]}</td>
                     <td className="px-4 py-3 tnum text-[13px] text-right font-medium text-foreground">{formatINR(a.loan_amount)}</td>
-                    <td className="px-4 py-3 text-[13px] text-muted-foreground">{formatDate(a.created_at)}</td>
+                    <td className="px-4 py-3 tnum text-[13px] text-right text-foreground">{a.recommended_amount != null ? formatINR(a.recommended_amount) : "—"}</td>
                     <td className="px-4 py-3"><StatusBadge status={a.status} /></td>
                     <td className="px-4 py-3">{a.decision ? <DecisionBadge decision={a.decision} /> : <span className="text-[13px] text-muted-foreground">—</span>}</td>
-                    <td className="px-4 py-3 tnum text-[13px] text-right text-muted-foreground">{a.tat_minutes ? `${a.tat_minutes} min` : "—"}</td>
+                    <td className="px-4 py-3 tnum text-[13px] text-right text-muted-foreground">{a.emi ? `₹${a.emi.toLocaleString("en-IN")}` : "—"}</td>
                     <td className="px-4 py-3 text-right">
                       <span className="inline-flex items-center gap-1 text-[12px] font-medium text-accent-foreground opacity-0 group-hover:opacity-100 transition-opacity">
                         View <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={2} />

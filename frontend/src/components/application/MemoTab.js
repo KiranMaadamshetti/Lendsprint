@@ -2,7 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { formatINR, LOAN_TYPE_LABEL } from "@/lib/format";
-import { Copy, Check, FileText } from "lucide-react";
+import { Copy, Check, FileText, FileDown } from "lucide-react";
 
 export function MemoTab({ application, decision, onRun }) {
   const [copied, setCopied] = useState(false);
@@ -31,6 +31,19 @@ export function MemoTab({ application, decision, onRun }) {
     }
   };
 
+  const downloadPdf = () => {
+    const w = window.open("", "_blank");
+    if (!w) return toast.error("Please allow pop-ups to download the memo");
+    const safe = decision.memo_text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    w.document.write(`<html><head><title>Credit Memo · ${application.borrower_name}</title>
+      <style>body{font-family:Georgia,'Times New Roman',serif;max-width:760px;margin:40px auto;padding:0 24px;color:#1a2440;line-height:1.6;font-size:13px}
+      h1{font-size:18px;border-bottom:2px solid #1e2a52;padding-bottom:8px}pre{white-space:pre-wrap;font-family:inherit}</style></head>
+      <body><h1>LendSprint AI — Credit Appraisal Memorandum</h1><pre>${safe}</pre>
+      <script>window.onload=function(){window.print()}</script></body></html>`);
+    w.document.close();
+    toast.success("Opening print dialog");
+  };
+
   const facts = [
     ["Borrower", application.borrower_name],
     ["Loan Type", LOAN_TYPE_LABEL[application.loan_type]],
@@ -55,6 +68,9 @@ export function MemoTab({ application, decision, onRun }) {
         </div>
         <Button size="sm" variant="outline" onClick={copy} data-testid="copy-memo-btn">
           {copied ? <><Check className="mr-1.5 h-4 w-4 text-emerald-600" />Copied</> : <><Copy className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Copy Memo</>}
+        </Button>
+        <Button size="sm" variant="outline" onClick={downloadPdf} data-testid="download-memo-btn">
+          <FileDown className="mr-1.5 h-4 w-4" strokeWidth={1.8} />Download PDF
         </Button>
       </div>
 

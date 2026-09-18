@@ -17,6 +17,8 @@ import { DecisionBadge, StatusBadge, DocStatusBadge } from "@/components/common/
 import { DecisionTab } from "@/components/application/DecisionTab";
 import { MemoTab } from "@/components/application/MemoTab";
 import { AuditTab } from "@/components/application/AuditTab";
+import { CreditBrainTab } from "@/components/application/CreditBrainTab";
+import { PolicyTab } from "@/components/application/PolicyTab";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -258,6 +260,8 @@ export default function ApplicationDetail() {
           {[
             ["overview", "Overview"],
             ["documents", "Documents"],
+            ["brain", "Credit Brain"],
+            ["policy", "Policy"],
             ["decision", "Decision"],
             ["memo", "Credit Memo"],
             ["audit", "Audit Trail"],
@@ -383,6 +387,14 @@ export default function ApplicationDetail() {
         </TabsContent>
 
         {/* Decision */}
+        <TabsContent value="brain" className="mt-5">
+          <CreditBrainTab applicationId={id} />
+        </TabsContent>
+
+        <TabsContent value="policy" className="mt-5">
+          <PolicyTab decision={decision} />
+        </TabsContent>
+
         <TabsContent value="decision" className="mt-5">
           <DecisionTab
             decision={decision}
