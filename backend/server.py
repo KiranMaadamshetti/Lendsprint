@@ -32,6 +32,9 @@ MOCK_MODE = os.environ.get('MOCK_MODE', 'true').lower() == 'true'
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGORITHM = "HS256"
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+MISTRAL_API_KEY = os.environ.get('MISTRAL_API_KEY', '')
+ANALYSIS_MODEL = "gpt-5.6-sol"
+OCR_MODEL = "mistral-ocr-latest"
 
 UPLOAD_DIR = ROOT_DIR / 'uploads'
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -281,7 +284,7 @@ async def generate_ai_memo(borrower: str, loan_type: str, loan_amount: float, re
             api_key=EMERGENT_LLM_KEY,
             session_id=f"memo-{borrower}",
             system_message="You are a senior credit analyst at an Indian NBFC writing professional, restrained credit memos.",
-        ).with_model("openai", "gpt-5.4")
+        ).with_model("openai", ANALYSIS_MODEL)
         resp = await chat.send_message(UserMessage(text=prompt))
         text = resp if isinstance(resp, str) else str(resp)
         text = text.strip()
@@ -554,7 +557,7 @@ def evaluate_document_readiness(documents: list, policy: dict) -> dict:
 
 
 def extract_pdf_text(path: str) -> str:
-    """Extract raw text from an uploaded PDF (first pages)."""
+    """Fallback: extract embedded text from a PDF with pypdf (used only if OCR is unavailable)."""
     try:
         from pypdf import PdfReader
         reader = PdfReader(path)
@@ -563,6 +566,45 @@ def extract_pdf_text(path: str) -> str:
     except Exception as e:
         logger.warning(f"PDF text extraction failed for {path}: {e}")
         return ""
+
+
+async def mistral_ocr_text(path: str) -> str:
+    """Extract document text/markdown via Mistral OCR (handles scanned PDFs & images)."""
+    if not MISTRAL_API_KEY:
+        return ""
+    try:
+        import base64
+        import httpx
+        with open(path, "rb") as fh:
+            data = fh.read()
+        ext = os.path.splitext(path)[1].lower()
+        encoded = base64.b64encode(data).decode("ascii")
+        if ext in (".png", ".jpg", ".jpeg", ".webp", ".avif"):
+            ct = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp", "avif": "image/avif"}[ext.lstrip(".")]
+            document = {"type": "image_url", "image_url": f"data:{ct};base64,{encoded}"}
+        else:
+            document = {"type": "document_url", "document_url": f"data:application/pdf;base64,{encoded}"}
+        payload = {"model": OCR_MODEL, "document": document, "include_image_base64": False}
+        headers = {"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"}
+        timeout = httpx.Timeout(connect=10.0, read=180.0, write=180.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post("https://api.mistral.ai/v1/ocr", json=payload, headers=headers)
+        if resp.is_error:
+            logger.warning(f"Mistral OCR HTTP {resp.status_code} for {os.path.basename(path)}")
+            return ""
+        pages = resp.json().get("pages", [])
+        return "\n\n".join(p.get("markdown", "") for p in pages).strip()
+    except Exception as e:
+        logger.warning(f"Mistral OCR failed for {path}: {e}")
+        return ""
+
+
+async def extract_document_text(path: str) -> str:
+    """Primary = Mistral OCR; fall back to embedded-text extraction if OCR returns nothing."""
+    text = await mistral_ocr_text(path)
+    if text:
+        return text
+    return extract_pdf_text(path)
 
 
 async def llm_extract_financials(application: dict, docs_text: list) -> Optional[dict]:
@@ -587,7 +629,7 @@ async def llm_extract_financials(application: dict, docs_text: list) -> Optional
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"extract-{application['id']}",
-                       system_message="You extract structured financial data from documents and reply with strict minified JSON only.").with_model("openai", "gpt-5.4")
+                       system_message="You extract structured financial data from documents and reply with strict minified JSON only.").with_model("openai", ANALYSIS_MODEL)
         resp = await chat.send_message(UserMessage(text=prompt))
         text = (resp if isinstance(resp, str) else str(resp)).strip()
         m = re.search(r"\{.*\}", text, re.S)
@@ -624,7 +666,7 @@ async def refresh_extraction(app_id: str) -> Optional[dict]:
     for d in docs:
         p = d.get("file_path")
         if p and os.path.exists(p):
-            t = extract_pdf_text(p)
+            t = await extract_document_text(p)
             if t:
                 texts.append({"label": DOC_TYPE_LABELS.get(d.get("doc_type"), d.get("doc_type")), "text": t})
     if not texts:
@@ -1019,7 +1061,7 @@ async def generate_ai_memo_detailed(application: dict, policy: dict, full: dict,
             "End with the disclaimer that it is AI-generated decision support subject to policy and analyst review."
         )
         chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"memo-{application['id']}",
-                       system_message="You are a senior credit analyst at an Indian NBFC writing detailed, restrained credit appraisal memos.").with_model("openai", "gpt-5.4")
+                       system_message="You are a senior credit analyst at an Indian NBFC writing detailed, restrained credit appraisal memos.").with_model("openai", ANALYSIS_MODEL)
         resp = await chat.send_message(UserMessage(text=prompt))
         text = (resp if isinstance(resp, str) else str(resp)).strip()
         return (text, "ai") if len(text) > 400 else (fallback, "template")
@@ -1607,7 +1649,7 @@ async def run_brain_chat(session_id: str, context: str, history: list, question:
     if history:
         convo = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in history[-6:])
         system += "\n\nCONVERSATION SO FAR:\n" + convo
-    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id, system_message=system).with_model("openai", "gpt-5.4")
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id, system_message=system).with_model("openai", ANALYSIS_MODEL)
     resp = await chat.send_message(UserMessage(text=question))
     return (resp if isinstance(resp, str) else str(resp)).strip()
 

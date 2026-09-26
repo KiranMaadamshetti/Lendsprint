@@ -73,6 +73,11 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## Mistral OCR + GPT-5.6 upgrade (2026-06-18)
+- Document extraction now uses **Mistral OCR** (`mistral-ocr-latest`, POST https://api.mistral.ai/v1/ocr, async httpx, base64 data URL) as the primary text/markdown extractor — handles scanned PDFs & images. `pypdf` retained only as a silent fallback (extract_document_text → mistral_ocr_text → extract_pdf_text). Requires MISTRAL_API_KEY in backend/.env (server-side only).
+- All LLM analysis calls (structured financial extraction, credit memo, Ask-Brain assistant) upgraded from gpt-5.4 → **gpt-5.6-sol** via the ANALYSIS_MODEL constant. Model constants centralised: ANALYSIS_MODEL, OCR_MODEL.
+- Verified: Mistral OCR HTTP 200 + markdown output; gpt-5.6-sol extracted exact figures from synthetic PDFs (0.99 confidence); decision genuine end-to-end. Upload latency ~8s (OCR + LLM).
+
 ## Genuine AI Credit Brain — real document extraction (2026-06-18)
 Shipped + tested (iteration_8: 7/7 backend + full frontend E2E, 100%). Aligns the app with the BFSI buildathon rule "must be genuinely AI-driven, not hardcoded to simulate intelligence":
 - ✅ Real PDF text extraction (pypdf) on document upload, then LLM (gpt-5.4 via emergentintegrations) extracts structured underwriting financials → stored as application.extracted_financials.
