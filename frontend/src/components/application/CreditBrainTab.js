@@ -54,6 +54,13 @@ const BAND_STYLE = {
   High: { text: "text-red-700", bg: "bg-red-50", ring: "border-red-200" },
 };
 const barColor = (s) => (s >= 70 ? "bg-emerald-500" : s >= 45 ? "bg-amber-500" : "bg-red-500");
+const RATING_STYLE = {
+  excellent: "bg-emerald-100 text-emerald-800",
+  good: "bg-emerald-50 text-emerald-700",
+  average: "bg-amber-50 text-amber-700",
+  review: "bg-amber-100 text-amber-800",
+  critical: "bg-red-100 text-red-700",
+};
 
 function RiskRadar({ radar }) {
   const st = BAND_STYLE[radar.band] || BAND_STYLE.Moderate;
@@ -133,6 +140,7 @@ export function CreditBrainTab({ applicationId }) {
   const ev = brain.evidence || {};
   const contradictions = brain.contradictions || [];
   const cibil = brain.cibil_report;
+  const cibilRating = brain.cibil_rating;
   const banking = brain.banking_analysis;
   const maxTrend = Math.max(...brain.cash_flow_trend.map((t) => t.value), 1);
 
@@ -181,11 +189,18 @@ export function CreditBrainTab({ applicationId }) {
               <Landmark className="h-4 w-4 text-accent-foreground" strokeWidth={1.8} />
               <h3 className="text-[14px] font-semibold text-foreground">Credit Bureau (CIBIL) Analysis</h3>
             </div>
-            <span className={`tnum rounded-full px-2.5 py-1 text-[12px] font-semibold ${(cibil.score || 0) >= 730 ? "bg-emerald-50 text-emerald-700" : (cibil.score || 0) >= 680 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`} data-testid="cibil-score">
-              Score {cibil.score ?? "—"}
-            </span>
+            <div className="flex items-center gap-2">
+              {cibilRating && (
+                <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${RATING_STYLE[cibilRating.severity] || "bg-secondary text-muted-foreground"}`} data-testid="cibil-rating">
+                  {cibilRating.rating}
+                </span>
+              )}
+              <span className={`tnum rounded-full px-2.5 py-1 text-[12px] font-semibold ${(cibil.score || 0) >= 730 ? "bg-emerald-50 text-emerald-700" : (cibil.score || 0) >= 680 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600"}`} data-testid="cibil-score">
+                Score {cibil.score ?? "—"}
+              </span>
+            </div>
           </div>
-          {cibil.summary && <p className="mt-1.5 text-[12px] text-muted-foreground">{cibil.summary}</p>}
+          {(cibilRating?.reason || cibil.summary) && <p className="mt-1.5 text-[12px] text-muted-foreground">{cibilRating?.reason || cibil.summary}</p>}
           <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="rounded-md border border-border bg-secondary/40 px-3 py-2"><div className="label-eyebrow">Active Loans</div><div className="metric-num mt-1 text-[15px] font-semibold text-foreground">{cibil.total_active_loans ?? "—"}</div></div>
             <div className="rounded-md border border-border bg-secondary/40 px-3 py-2"><div className="label-eyebrow">Sanctioned</div><div className="metric-num mt-1 text-[15px] font-semibold text-foreground">{cibil.total_sanctioned != null ? formatLakh(cibil.total_sanctioned) : "—"}</div></div>

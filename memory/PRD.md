@@ -73,6 +73,9 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## CIBIL Classification Rules (2026-06-18)
+- ✅ `classify_cibil(score, max_dpd)` rates every bureau profile; DPD is the dominant gate: max DPD ≥90 → **Danger / Bad Profile** (critical); 7 < DPD < 90 → **Not a Good Customer** (review); DPD ≤7 (or none) → score ≥750 **Excellent**, ≥650 **Good**, else **Average**. Tolerance constant CIBIL_DPD_TOLERANCE=7. Exposed as credit_brain.cibil_rating and shown as a coloured badge + reason line in the CIBIL section (data-testid cibil-rating). Verified: 771/0d=Excellent, 648/62d=Not a Good Customer, 760/120d=Danger, 640/0d=Average.
+
 ## Risk Radar + Month-wise Banking (2026-06-18)
 - ✅ **Risk Radar**: backend `compute_risk_radar()` produces a 0-100 composite (higher = safer) from four sub-scores — Bureau Health (CIBIL), Repayment Track (DPD/overdue), Banking Conduct (anomalies + bounces), Cash Flow (DSCR/FOIR/net) — plus a band (Low/Moderate/High). Rendered as a coloured band with factor bars at the top of the Credit Brain tab (data-testid risk-radar, risk-radar-score, risk-radar-band). Verified: strong=92/Low, risky=31/High.
 - ✅ **Month-wise banking**: extraction schema + prompt now capture `banking_analysis.monthly_breakdown` (per-month credits/debits/closing balance); shown as a "Month-wise Summary" table (data-testid monthly-breakdown, month-row-N) in Bank Statement Analysis, alongside the existing average monthly balance tile. Demo docs include 12 months of data.

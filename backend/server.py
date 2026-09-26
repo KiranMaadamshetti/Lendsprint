@@ -713,6 +713,29 @@ async def refresh_extraction(app_id: str) -> Optional[dict]:
     return ef
 
 
+CIBIL_DPD_TOLERANCE = 7  # days; up to this is treated as clean
+
+
+def classify_cibil(score, max_dpd) -> dict:
+    """Rate a bureau profile by score + worst DPD. DPD is the dominant gate.
+    Rules: DPD>=90 -> Danger/Bad; 7<DPD<90 -> Not a Good Customer; DPD<=7 (or none) ->
+    score>=750 Excellent, score>=650 Good, else Average."""
+    score = int(score or 0)
+    dpd = max_dpd
+    if dpd is not None and dpd >= 90:
+        return {"rating": "Danger / Bad Profile", "severity": "critical",
+                "reason": f"Worst DPD {dpd} days (>=90) indicates serious default risk."}
+    if dpd is not None and dpd > CIBIL_DPD_TOLERANCE:
+        return {"rating": "Not a Good Customer", "severity": "review",
+                "reason": f"Worst DPD {dpd} days exceeds the {CIBIL_DPD_TOLERANCE}-day tolerance."}
+    clean = f"clean repayment (max DPD {dpd if dpd is not None else 0}d, within {CIBIL_DPD_TOLERANCE}d tolerance)"
+    if score >= 750:
+        return {"rating": "Excellent", "severity": "excellent", "reason": f"CIBIL {score} (>=750) with {clean}."}
+    if score >= 650:
+        return {"rating": "Good", "severity": "good", "reason": f"CIBIL {score} (>=650) with {clean}."}
+    return {"rating": "Average", "severity": "average", "reason": f"CIBIL {score} (<650) is below the good-customer threshold."}
+
+
 def compute_risk_radar(pd_score: float, cibil_report: dict, banking_analysis: dict, fin: dict) -> dict:
     """Composite risk band combining bureau health, repayment track, banking conduct and cash flow (0-100, higher = safer)."""
     def clamp(x):
@@ -909,6 +932,7 @@ def credit_brain(application: dict) -> dict:
         "cibil_report": cibil_report,
         "banking_analysis": banking_analysis,
         "risk_radar": compute_risk_radar(pd_score, cibil_report, banking_analysis, fin),
+        "cibil_rating": classify_cibil((cibil_report or {}).get("score") or cibil, (cibil_report or {}).get("max_dpd")),
         "extraction_source": r["_source"],
         "extraction_confidence": r["_confidence"],
         "evidence": build_evidence(fin, seed, r["_confidence"]),
