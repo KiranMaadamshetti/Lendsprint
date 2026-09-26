@@ -73,6 +73,10 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## Risk Radar + Month-wise Banking (2026-06-18)
+- ✅ **Risk Radar**: backend `compute_risk_radar()` produces a 0-100 composite (higher = safer) from four sub-scores — Bureau Health (CIBIL), Repayment Track (DPD/overdue), Banking Conduct (anomalies + bounces), Cash Flow (DSCR/FOIR/net) — plus a band (Low/Moderate/High). Rendered as a coloured band with factor bars at the top of the Credit Brain tab (data-testid risk-radar, risk-radar-score, risk-radar-band). Verified: strong=92/Low, risky=31/High.
+- ✅ **Month-wise banking**: extraction schema + prompt now capture `banking_analysis.monthly_breakdown` (per-month credits/debits/closing balance); shown as a "Month-wise Summary" table (data-testid monthly-breakdown, month-row-N) in Bank Statement Analysis, alongside the existing average monthly balance tile. Demo docs include 12 months of data.
+
 ## Deep CIBIL + Bank-Statement Analysis (2026-06-18)
 Shipped + tested (iteration_9: frontend 100%, backend curl-verified, zero issues):
 - ✅ On upload, Mistral OCR + GPT-5.6-sol now also extract a full **CIBIL report** (score, active loans, sanctioned/outstanding/overdue, worst DPD, 6-month enquiries, per-account tradelines table with lender/type/sanctioned/outstanding/EMI/DPD/status) and **bank-statement analysis** (avg balance, EMI count + list of instalments/beneficiaries, top credit sources & debit destinations, cash-flow pattern, inflow/outflow ratio).

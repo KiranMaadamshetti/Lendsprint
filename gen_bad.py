@@ -21,6 +21,20 @@ make("/app/synthetic_docs/bad_bank.pdf", [
     "Total annual bank credits (turnover): INR 1,44,00,000",
     "Inflow to outflow ratio: 0.96",
     "",
+    "MONTH-WISE SUMMARY (credits / debits / closing balance in INR):",
+    "  Apr-2025: 13,40,000 / 13,90,000 / 1,60,000",
+    "  May-2025: 10,80,000 / 11,50,000 / 1,20,000",
+    "  Jun-2025: 14,20,000 / 13,10,000 / 2,10,000",
+    "  Jul-2025: 9,60,000 / 10,80,000 / 90,000",
+    "  Aug-2025: 12,90,000 / 12,40,000 / 1,80,000",
+    "  Sep-2025: 11,20,000 / 12,10,000 / 1,10,000",
+    "  Oct-2025: 13,80,000 / 13,20,000 / 2,20,000",
+    "  Nov-2025: 10,40,000 / 11,90,000 / 80,000",
+    "  Dec-2025: 14,60,000 / 13,70,000 / 2,40,000",
+    "  Jan-2026: 9,90,000 / 11,20,000 / 70,000",
+    "  Feb-2026: 12,10,000 / 12,00,000 / 1,50,000",
+    "  Mar-2026: 11,10,000 / 12,80,000 / 60,000",
+    "",
     "RECURRING EMI / LOAN INSTALMENT DEBITS (monthly):",
     "  Kotak Personal Loan EMI ................. INR 85,000 (monthly)",
     "  HDFC Credit Card minimum due ............ INR 40,000 (monthly)",
@@ -65,4 +79,4 @@ make("/app/synthetic_docs/bad_gst.pdf", [
     "Aggregate annual turnover declared: INR 78,00,000",
     "Business commencement: registered 15 months ago",
 ])
-print("generated risky set + CIBIL with anomalies")
+print("generated risky set + CIBIL + month-wise")

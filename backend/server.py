@@ -629,6 +629,7 @@ async def llm_extract_financials(application: dict, docs_text: list) -> Optional
         '"top_credit_sources":[{"party":str,"total_amount":int,"txn_count":int}],'
         '"top_debit_destinations":[{"party":str,"total_amount":int,"txn_count":int}],'
         '"anomalies":[{"type":str,"description":str,"amount":int,"severity":str}],'
+        '"monthly_breakdown":[{"month":str,"credits":int,"debits":int,"closing_balance":int}],'
         '"cash_flow_pattern":str,"inflow_outflow_ratio":float}'
         '}'
     )
@@ -645,7 +646,9 @@ async def llm_extract_financials(application: dict, docs_text: list) -> Optional
         "instalments the customer pays each month (total_emi_count) and their total monthly outflow, the list of "
         "those EMIs (beneficiary, amount, frequency), the top credit sources (who pays money IN, with totals and "
         "counts), the top debit destinations (where money goes OUT), the overall cash_flow_pattern in one sentence, "
-        "and the inflow_outflow_ratio. CRITICALLY, flag any ANOMALOUS or high-risk transactions in 'anomalies' — "
+        "and the inflow_outflow_ratio. Also populate monthly_breakdown: for EACH month present in the statement, "
+        "give the month label and that month's total credits, total debits and closing balance. "
+        "CRITICALLY, flag any ANOMALOUS or high-risk transactions in 'anomalies' — "
         "e.g. online rummy/poker/betting/gambling/gaming apps (Rummy, Dream11, betting sites), frequent large cash "
         "withdrawals, round-tripping, unexplained large one-off credits, crypto, or other unwanted/red-flag activity. "
         "For each anomaly give type, a short description, the amount involved, and severity (critical/review/warning).\n\n"
@@ -708,6 +711,58 @@ async def refresh_extraction(app_id: str) -> Optional[dict]:
     if ef:
         await db.applications.update_one({"id": app_id}, {"$set": {"extracted_financials": ef}})
     return ef
+
+
+def compute_risk_radar(pd_score: float, cibil_report: dict, banking_analysis: dict, fin: dict) -> dict:
+    """Composite risk band combining bureau health, repayment track, banking conduct and cash flow (0-100, higher = safer)."""
+    def clamp(x):
+        return int(max(5, min(100, round(x))))
+    cr = cibil_report or {}
+    ba = banking_analysis or {}
+    score = cr.get("score") or fin.get("cibil") or 0
+    if score >= 780: bureau = 92
+    elif score >= 750: bureau = 82
+    elif score >= 720: bureau = 72
+    elif score >= 700: bureau = 62
+    elif score >= 680: bureau = 50
+    elif score >= 650: bureau = 38
+    else: bureau = 22
+    mdpd = cr.get("max_dpd")
+    overdue = cr.get("total_overdue") or 0
+    if mdpd is None: repay = 70
+    elif mdpd == 0: repay = 95
+    elif mdpd < 15: repay = 80
+    elif mdpd < 30: repay = 62
+    elif mdpd < 60: repay = 45
+    elif mdpd < 90: repay = 28
+    else: repay = 15
+    if overdue and overdue > 0:
+        repay = max(10, repay - 12)
+    conduct = 95
+    anomalies = ba.get("anomalies") or []
+    for a in anomalies:
+        sev = (a.get("severity") or "review").lower()
+        conduct -= 28 if sev == "critical" else 14 if sev == "review" else 7
+    conduct -= min(fin.get("cheque_bounces", 0), 5) * 4 + min(fin.get("nach_bounces", 0), 5) * 3
+    conduct = clamp(conduct)
+    dscr = fin.get("dscr", 0) or 0
+    foir = fin.get("foir_before", 1) or 0
+    net = fin.get("net_cash_flow", 0) or 0
+    cf = 50
+    cf += 20 if dscr >= 1.8 else 8 if dscr >= 1.3 else -10
+    cf += 18 if foir <= 0.4 else 6 if foir <= 0.55 else -12
+    cf += 10 if net > 0 else -20
+    cf = clamp(cf)
+    bureau, repay = clamp(bureau), clamp(repay)
+    overall = clamp(bureau * 0.25 + repay * 0.30 + conduct * 0.25 + cf * 0.20)
+    band = "Low" if overall >= 70 else "Moderate" if overall >= 45 else "High"
+    factors = [
+        {"label": "Bureau Health", "score": bureau, "note": f"CIBIL {score}" if score else "No bureau score"},
+        {"label": "Repayment Track", "score": repay, "note": (f"Max DPD {mdpd}d" if mdpd is not None else "No DPD data")},
+        {"label": "Banking Conduct", "score": conduct, "note": f"{len(anomalies)} anomaly flag(s)"},
+        {"label": "Cash Flow", "score": cf, "note": f"DSCR {dscr}x · FOIR {round(foir*100)}%"},
+    ]
+    return {"overall": overall, "band": band, "factors": factors}
 
 
 def _pd_from_financials(fin: dict) -> float:
@@ -853,6 +908,7 @@ def credit_brain(application: dict) -> dict:
         "contradictions": contradictions,
         "cibil_report": cibil_report,
         "banking_analysis": banking_analysis,
+        "risk_radar": compute_risk_radar(pd_score, cibil_report, banking_analysis, fin),
         "extraction_source": r["_source"],
         "extraction_confidence": r["_confidence"],
         "evidence": build_evidence(fin, seed, r["_confidence"]),

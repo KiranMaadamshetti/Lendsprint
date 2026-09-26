@@ -21,6 +21,20 @@ make("/app/synthetic_docs/bank.pdf", [
     "Total annual bank credits (turnover): INR 2,22,00,000",
     "Inflow to outflow ratio: 1.18",
     "",
+    "MONTH-WISE SUMMARY (credits / debits / closing balance in INR):",
+    "  Apr-2025: 19,20,000 / 17,80,000 / 8,90,000",
+    "  May-2025: 17,90,000 / 16,40,000 / 9,10,000",
+    "  Jun-2025: 18,60,000 / 17,10,000 / 9,40,000",
+    "  Jul-2025: 20,10,000 / 18,20,000 / 9,80,000",
+    "  Aug-2025: 17,40,000 / 16,90,000 / 8,70,000",
+    "  Sep-2025: 18,80,000 / 17,50,000 / 9,20,000",
+    "  Oct-2025: 19,60,000 / 18,00,000 / 9,60,000",
+    "  Nov-2025: 18,20,000 / 16,80,000 / 9,30,000",
+    "  Dec-2025: 20,40,000 / 18,60,000 / 9,90,000",
+    "  Jan-2026: 17,80,000 / 16,50,000 / 8,80,000",
+    "  Feb-2026: 18,10,000 / 17,00,000 / 9,10,000",
+    "  Mar-2026: 19,90,000 / 18,40,000 / 9,50,000",
+    "",
     "RECURRING EMI / LOAN INSTALMENT DEBITS (monthly):",
     "  HDFC Bank Equipment Loan EMI ............ INR 1,25,000 (monthly)",
     "  Bajaj Finserv Machinery Loan EMI ........ INR 55,000 (monthly)",
@@ -68,4 +82,4 @@ make("/app/synthetic_docs/gst.pdf", [
     "Aggregate annual turnover declared: INR 2,15,00,000",
     "Filing status: all periods filed, no defaults",
 ])
-print("generated strong set + CIBIL")
+print("generated strong set + CIBIL + month-wise")

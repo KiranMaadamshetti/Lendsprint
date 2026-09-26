@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { getCreditBrain, apiErrorMessage } from "@/lib/api";
 import { formatINR, formatLakh } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TrendingUp, TrendingDown, ShieldCheck, AlertTriangle, Brain, GitCompareArrows, FileCheck2, FileX2, CheckCircle2, Landmark, Banknote, AlertOctagon, ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { TrendingUp, TrendingDown, ShieldCheck, AlertTriangle, Brain, GitCompareArrows, FileCheck2, FileX2, CheckCircle2, Landmark, Banknote, AlertOctagon, ArrowDownRight, ArrowUpRight, Radar, CalendarDays } from "lucide-react";
 import { EvidenceMetric, EvidenceSheet } from "@/components/application/EvidencePanel";
 
 const SEV_DOT = { critical: "bg-red-500", review: "bg-amber-500", warning: "bg-amber-500", info: "bg-emerald-500" };
@@ -48,6 +48,71 @@ function Signal({ s, positive }) {
   );
 }
 
+const BAND_STYLE = {
+  Low: { text: "text-emerald-700", bg: "bg-emerald-50", ring: "border-emerald-200" },
+  Moderate: { text: "text-amber-700", bg: "bg-amber-50", ring: "border-amber-200" },
+  High: { text: "text-red-700", bg: "bg-red-50", ring: "border-red-200" },
+};
+const barColor = (s) => (s >= 70 ? "bg-emerald-500" : s >= 45 ? "bg-amber-500" : "bg-red-500");
+
+function RiskRadar({ radar }) {
+  const st = BAND_STYLE[radar.band] || BAND_STYLE.Moderate;
+  return (
+    <div className={`rounded-lg border ${st.ring} ${st.bg} p-5`} data-testid="risk-radar">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2"><Radar className={`h-4 w-4 ${st.text}`} strokeWidth={1.8} /><h3 className="text-[14px] font-semibold text-foreground">Risk Radar</h3></div>
+        <span className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${st.text}`} data-testid="risk-radar-band">{radar.band} Risk</span>
+      </div>
+      <div className="mt-3 flex items-center gap-5">
+        <div className="shrink-0 text-center">
+          <div className={`metric-num text-[34px] font-bold leading-none ${st.text}`} data-testid="risk-radar-score">{radar.overall}</div>
+          <div className="label-eyebrow mt-1">/ 100</div>
+        </div>
+        <div className="flex-1 space-y-2">
+          {radar.factors.map((fac) => (
+            <div key={fac.label} className="flex items-center gap-3">
+              <span className="w-[120px] shrink-0 text-[12px] text-muted-foreground">{fac.label}</span>
+              <div className="flex-1 h-2 rounded-full bg-white/70 overflow-hidden"><div className={`h-full rounded-full ${barColor(fac.score)}`} style={{ width: `${fac.score}%` }} /></div>
+              <span className="tnum w-[34px] text-right text-[12px] font-medium text-foreground">{fac.score}</span>
+              <span className="hidden sm:block w-[120px] text-[11px] text-muted-foreground truncate">{fac.note}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonthTable({ rows }) {
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-1.5 label-eyebrow mb-1.5"><CalendarDays className="h-3.5 w-3.5 text-accent-foreground" strokeWidth={2} />Month-wise Summary</div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]" data-testid="monthly-breakdown">
+          <thead>
+            <tr className="border-b border-border text-left text-muted-foreground">
+              <th className="py-2 pr-3 font-medium">Month</th>
+              <th className="py-2 pr-3 font-medium text-right">Credits</th>
+              <th className="py-2 pr-3 font-medium text-right">Debits</th>
+              <th className="py-2 pr-3 font-medium text-right">Closing Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-b border-border/60" data-testid={`month-row-${i}`}>
+                <td className="py-2 pr-3 font-medium text-foreground">{r.month}</td>
+                <td className="tnum py-2 pr-3 text-right text-emerald-700">{r.credits != null ? formatLakh(r.credits) : "—"}</td>
+                <td className="tnum py-2 pr-3 text-right text-red-600">{r.debits != null ? formatLakh(r.debits) : "—"}</td>
+                <td className="tnum py-2 pr-3 text-right text-foreground">{r.closing_balance != null ? formatLakh(r.closing_balance) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function CreditBrainTab({ applicationId }) {
   const [brain, setBrain] = useState(null);
   const [readiness, setReadiness] = useState(null);
@@ -88,6 +153,8 @@ export function CreditBrainTab({ applicationId }) {
           </span>
         )}
       </div>
+
+      {brain.risk_radar && <RiskRadar radar={brain.risk_radar} />}
 
       <div className="rounded-lg border border-border bg-card p-5">
         <h3 className="text-[14px] font-semibold text-foreground">Financial Health</h3>
@@ -173,6 +240,10 @@ export function CreditBrainTab({ applicationId }) {
             <div className="rounded-md border border-border bg-secondary/40 px-3 py-2"><div className="label-eyebrow">EMI Outflow</div><div className="metric-num mt-1 text-[15px] font-semibold text-foreground">{banking.total_emi_outflow != null ? formatINR(banking.total_emi_outflow) : "—"}</div></div>
             <div className="rounded-md border border-border bg-secondary/40 px-3 py-2"><div className="label-eyebrow">Inflow / Outflow</div><div className="metric-num mt-1 text-[15px] font-semibold text-foreground">{banking.inflow_outflow_ratio != null ? `${Number(banking.inflow_outflow_ratio).toFixed(2)}x` : "—"}</div></div>
           </div>
+
+          {Array.isArray(banking.monthly_breakdown) && banking.monthly_breakdown.length > 0 && (
+            <MonthTable rows={banking.monthly_breakdown} />
+          )}
 
           {Array.isArray(banking.emis) && banking.emis.length > 0 && (
             <div className="mt-4">
