@@ -608,28 +608,55 @@ async def extract_document_text(path: str) -> str:
 
 
 async def llm_extract_financials(application: dict, docs_text: list) -> Optional[dict]:
-    """Use the LLM to extract structured underwriting financials from document text."""
+    """Use the LLM to extract structured underwriting financials + deep CIBIL & bank-statement analysis."""
     import json as _json
-    combined = "\n\n".join(f"=== {d['label']} ===\n{d['text'][:6000]}" for d in docs_text if d.get("text"))
+    combined = "\n\n".join(f"=== {d['label']} ===\n{d['text'][:9000]}" for d in docs_text if d.get("text"))
     if not combined.strip():
         return None
-    schema = ('{"avg_monthly_credits":int,"monthly_obligations":int,"existing_emi":int,'
-              '"avg_monthly_balance":int,"banking_turnover":int,"gst_turnover":int,'
-              '"itr_declared_income":int,"annual_turnover":int,"business_vintage_months":int,'
-              '"cibil":int,"cheque_bounces":int,"nach_bounces":int,"banking_history_months":int,'
-              '"industry":str,"confidence":float}')
+    schema = (
+        '{'
+        '"avg_monthly_credits":int,"monthly_obligations":int,"existing_emi":int,'
+        '"avg_monthly_balance":int,"banking_turnover":int,"gst_turnover":int,'
+        '"itr_declared_income":int,"annual_turnover":int,"business_vintage_months":int,'
+        '"cibil":int,"cheque_bounces":int,"nach_bounces":int,"banking_history_months":int,'
+        '"industry":str,"confidence":float,'
+        '"cibil_report":{"score":int,"total_active_loans":int,"total_sanctioned":int,'
+        '"total_outstanding":int,"total_overdue":int,"max_dpd":int,"enquiries_6m":int,'
+        '"summary":str,"tradelines":[{"lender":str,"loan_type":str,"sanctioned":int,'
+        '"outstanding":int,"emi":int,"dpd":int,"status":str,"opened":str}]},'
+        '"banking_analysis":{"avg_monthly_balance":int,"total_emi_count":int,'
+        '"total_emi_outflow":int,"emis":[{"beneficiary":str,"amount":int,"frequency":str}],'
+        '"top_credit_sources":[{"party":str,"total_amount":int,"txn_count":int}],'
+        '"top_debit_destinations":[{"party":str,"total_amount":int,"txn_count":int}],'
+        '"anomalies":[{"type":str,"description":str,"amount":int,"severity":str}],'
+        '"cash_flow_pattern":str,"inflow_outflow_ratio":float}'
+        '}'
+    )
     prompt = (
-        "You are a credit-underwriting data extraction engine for an Indian NBFC. From the borrower documents "
-        "below (synthetic demo data), extract the financial fields. Money values in INR as plain integers "
-        "(no commas/symbols). If a field is absent, estimate conservatively from what is available and lower the "
-        "confidence. banking_turnover = annualised total bank credits; gst_turnover = turnover declared in GST "
-        "returns; itr_declared_income = annual income declared in ITR; confidence is 0-1 overall extraction quality. "
-        f"Return ONLY minified JSON matching this schema: {schema}\n\nDOCUMENTS:\n{combined}"
+        "You are a senior credit-underwriting analyst for an Indian NBFC. Read the borrower documents below "
+        "(synthetic demo data) and extract a thorough, structured credit analysis. Money values in INR as plain "
+        "integers (no commas/symbols). If a field is absent, estimate conservatively and lower the confidence.\n\n"
+        "FROM THE CIBIL / CREDIT BUREAU REPORT populate cibil_report: the score, every loan/tradeline (lender, "
+        "loan_type, sanctioned amount, current outstanding, EMI, worst DPD in days, status like Active/Closed/"
+        "Overdue, and opened date), the total number of active loans, total sanctioned, total outstanding, total "
+        "overdue amount, worst max_dpd across all accounts, number of hard enquiries in last 6 months, and a "
+        "one-line summary of the repayment track record.\n\n"
+        "FROM THE BANK STATEMENT populate banking_analysis: average monthly balance, how many distinct EMIs/loan "
+        "instalments the customer pays each month (total_emi_count) and their total monthly outflow, the list of "
+        "those EMIs (beneficiary, amount, frequency), the top credit sources (who pays money IN, with totals and "
+        "counts), the top debit destinations (where money goes OUT), the overall cash_flow_pattern in one sentence, "
+        "and the inflow_outflow_ratio. CRITICALLY, flag any ANOMALOUS or high-risk transactions in 'anomalies' — "
+        "e.g. online rummy/poker/betting/gambling/gaming apps (Rummy, Dream11, betting sites), frequent large cash "
+        "withdrawals, round-tripping, unexplained large one-off credits, crypto, or other unwanted/red-flag activity. "
+        "For each anomaly give type, a short description, the amount involved, and severity (critical/review/warning).\n\n"
+        "banking_turnover = annualised total bank credits; gst_turnover = GST-declared turnover; "
+        "itr_declared_income = ITR annual income; confidence is 0-1 overall extraction quality.\n\n"
+        f"Return ONLY minified JSON matching this schema exactly: {schema}\n\nDOCUMENTS:\n{combined}"
     )
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"extract-{application['id']}",
-                       system_message="You extract structured financial data from documents and reply with strict minified JSON only.").with_model("openai", ANALYSIS_MODEL)
+                       system_message="You extract structured financial data and deep credit analysis from documents and reply with strict minified JSON only.").with_model("openai", ANALYSIS_MODEL)
         resp = await chat.send_message(UserMessage(text=prompt))
         text = (resp if isinstance(resp, str) else str(resp)).strip()
         m = re.search(r"\{.*\}", text, re.S)
@@ -637,6 +664,8 @@ async def llm_extract_financials(application: dict, docs_text: list) -> Optional
             return None
         data = _json.loads(m.group(0))
         conf = data.pop("confidence", 0.85)
+        cibil_report = data.pop("cibil_report", None)
+        banking_analysis = data.pop("banking_analysis", None)
         out = {}
         for k, v in data.items():
             if k == "industry":
@@ -648,6 +677,10 @@ async def llm_extract_financials(application: dict, docs_text: list) -> Optional
                     continue
         if not out.get("avg_monthly_credits"):
             return None
+        if isinstance(cibil_report, dict):
+            out["cibil_report"] = cibil_report
+        if isinstance(banking_analysis, dict):
+            out["banking_analysis"] = banking_analysis
         out["_confidence"] = round(float(conf), 2)
         out["_source"] = "ai"
         return out
@@ -778,6 +811,29 @@ def credit_brain(application: dict) -> dict:
     if cibil < 680:
         risk.append({"label": "Sub-threshold bureau score", "evidence": f"Bureau score of {cibil}.", "source": "Credit Bureau", "severity": "critical"})
 
+    ef = application.get("extracted_financials") or {}
+    cibil_report = ef.get("cibil_report")
+    banking_analysis = ef.get("banking_analysis")
+    if isinstance(cibil_report, dict):
+        mdpd = int(cibil_report.get("max_dpd") or 0)
+        overdue = int(cibil_report.get("total_overdue") or 0)
+        if mdpd >= 90:
+            risk.append({"label": "Severe delinquency on bureau", "evidence": f"Worst DPD of {mdpd} days across existing tradelines.", "source": "CIBIL Report", "severity": "critical"})
+        elif mdpd >= 30:
+            risk.append({"label": "Recent bureau delinquency", "evidence": f"Worst DPD of {mdpd} days reported.", "source": "CIBIL Report", "severity": "review"})
+        if overdue > 0:
+            risk.append({"label": "Outstanding overdue on bureau", "evidence": f"₹{lakh(overdue)} L reported overdue across active loans.", "source": "CIBIL Report", "severity": "review"})
+    if isinstance(banking_analysis, dict):
+        for a in (banking_analysis.get("anomalies") or []):
+            sev = (a.get("severity") or "review").lower()
+            if sev not in ("critical", "review", "warning"):
+                sev = "review"
+            amt = a.get("amount")
+            ev_txt = a.get("description") or a.get("type") or "Anomalous activity detected"
+            if amt:
+                ev_txt = f"{ev_txt} (≈₹{lakh(int(amt))} L)"
+            risk.append({"label": f"Anomalous transactions: {a.get('type', 'flagged activity')}", "evidence": ev_txt, "source": "Bank Statement", "severity": sev})
+
     fin = {
         "revenue": revenue, "annual_credits": annual_credits, "avg_monthly_credits": income,
         "avg_monthly_balance": avg_balance, "existing_emi": existing_emi,
@@ -795,6 +851,8 @@ def credit_brain(application: dict) -> dict:
         "positive_signals": positive,
         "risk_signals": risk,
         "contradictions": contradictions,
+        "cibil_report": cibil_report,
+        "banking_analysis": banking_analysis,
         "extraction_source": r["_source"],
         "extraction_confidence": r["_confidence"],
         "evidence": build_evidence(fin, seed, r["_confidence"]),
@@ -885,7 +943,8 @@ def compute_full_decision(application: dict, policy: dict, force_known: bool = T
     else:
         decision = "approve"
     crit_contra = [c for c in brain.get("contradictions", []) if c["severity"] == "critical"]
-    if crit_contra and decision == "approve":
+    crit_risk = [s for s in brain.get("risk_signals", []) if s.get("severity") == "critical"]
+    if (crit_contra or crit_risk) and decision == "approve":
         decision = "review"
 
     if decision == "approve":
