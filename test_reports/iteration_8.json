@@ -1,0 +1,25 @@
+{
+  "summary": "Verified the genuine AI-driven Credit Brain feature end-to-end. Created 2 new test applications and uploaded synthetic PDFs; the real gpt-5.4 extraction ran and produced structured financials that flowed through PD, policy engine and decision. Backend: 7/7 pytest tests pass (strong Nova returns extraction_source=ai with avg_monthly_credits ~₹18.5L, banking_turnover ~₹2.22Cr, GST ~₹2.15Cr, CIBIL 771, PD 0.138, no contradictions, readiness ready; decision returns approve/grade A with cash_flow_summary.income == extracted avg_monthly_credits proving no KNOWN_PROFILES override; weak Skyline returns extraction_source=ai with CONTRA-TURNOVER, CIBIL ~648, readiness blocked, and POST /decision returns 400; regression: legacy Arvind still renders with 'estimate' source). Frontend: verified via Playwright that CreditBrainTab on Nova shows the green 'AI-extracted from documents · 99% confidence' badge (data-testid=extraction-badge) with all extracted metrics populated, Document Readiness = Ready to decide, Contradictions panel = 'No material contradictions'; regression: Arvind renders with 'Estimated · no parsed documents' badge without crashes.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "test_report_links": [
+    "/app/backend/tests/test_ai_extraction.py",
+    "/app/test_reports/pytest/ai_extraction.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "llm_extract_financials() has no timeout guard and can slow /documents upload response by 5-10s; consider running extraction as a background task and returning the upload immediately (UX + reliability).",
+    "extract_pdf_text hard-limits to first 15 pages silently; for a real bank statement (12 months across many pages) this may miss the tail — expose a configurable limit and log truncations.",
+    "gpt-5.4 model literal is hardcoded in two places (memo + extraction); centralise into a constant / env var so a model bump is a one-line change.",
+    "server.py is 1777 lines — the AI extraction, credit brain composition and decision pipeline should be split into modules for maintainability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_ai_extraction.py (new — 7 tests covering strong AI extraction, weak/contradictions, real-data decision, blocked decision, regression on legacy apps)"
+  ],
+  "success_rate": { "backend": "100% (7/7)", "frontend": "100% of critical flows" },
+  "test_credentials": "Admin kiranmaadamshetti@gmail.com / LendSprint@2026",
+  "seed_data_creation": "Created 2 TEST_ applications (TEST_Nova Precision Tools with bank+itr+gst uploaded, TEST_Skyline Traders with bad_bank+bad_gst uploaded). Both trigger real gpt-5.4 extraction and decisions.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "TEST_ apps left in DB; delete them if a clean slate is needed. Backend test file is at /app/backend/tests/test_ai_extraction.py — it creates fresh apps each run so it is idempotent. Uses pytest with the repo's pytest.ini (xdist). Run with `-o addopts=` to avoid parallel gw issues. The credit-brain response shape is `{application, credit_brain, readiness, computed}` (readiness at top-level not inside credit_brain); decision endpoint returns decision_doc directly with keys `decision`, `risk_grade`, `cash_flow_summary`, etc."
+}

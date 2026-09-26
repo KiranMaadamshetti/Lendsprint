@@ -73,6 +73,15 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## Genuine AI Credit Brain — real document extraction (2026-06-18)
+Shipped + tested (iteration_8: 7/7 backend + full frontend E2E, 100%). Aligns the app with the BFSI buildathon rule "must be genuinely AI-driven, not hardcoded to simulate intelligence":
+- ✅ Real PDF text extraction (pypdf) on document upload, then LLM (gpt-5.4 via emergentintegrations) extracts structured underwriting financials → stored as application.extracted_financials.
+- ✅ PD score is now a transparent function of the extracted metrics (_pd_from_financials); the decision comes from the policy engine on real data. Removed the hardcoded KNOWN_PROFILES `force_known` override that faked outcomes.
+- ✅ Contradictions (GST vs banking turnover, ITR vs banking) computed from the REAL extracted numbers; cash-flow summary + reason codes now flow from extracted financials.
+- ✅ Credit Brain tab badge: "AI-extracted from documents · N% confidence" vs "Estimated · no parsed documents" (docs-less legacy rows fall back gracefully). "Documents Analysed" audit event on upload.
+- Verified: Nova Precision (strong synthetic PDFs) → real extraction (₹18.5L credits, ₹2.22Cr banking TO, CIBIL 771) → approve/Grade A/policy PASS; Skyline (mismatched PDFs) → PD 0.544 + critical GST-vs-banking contradiction (46%) + blocked (missing ITR). Synthetic test PDFs kept in /app/synthetic_docs/.
+- Backlog from review: run extraction as background task (upload latency ~5-10s), centralise gpt-5.4 model constant, split server.py into modules.
+
 ## Contradiction Flags + Document Readiness (2026-06-18)
 Shipped + tested (iteration_7: 6/6 backend + full frontend E2E, 100%):
 - ✅ Cross-source contradiction detection in Credit Brain: GST turnover vs banking turnover (CONTRA-TURNOVER) and ITR income vs banking credits (CONTRA-INCOME), each with severity (critical/review) and % variance. Surfaced in a "Contradictions & Data Integrity" panel on the Credit Brain tab and in the Decision Trace Extraction node. A critical contradiction downgrades an approve→review.
