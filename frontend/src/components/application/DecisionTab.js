@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { formatLakh, formatDateTime } from "@/lib/format";
 import { useState } from "react";
 import { EvidenceSheet } from "@/components/application/EvidencePanel";
-import { FileSearch, Loader2, TrendingUp, TrendingDown, ArrowRight, Wallet, Scale, Coins, ShieldAlert, PenLine } from "lucide-react";
+import { FileSearch, Loader2, TrendingUp, TrendingDown, ArrowRight, Wallet, Scale, Coins, ShieldAlert, PenLine, ChevronRight } from "lucide-react";
 
 const STEPS = [
   "Reading documents",
@@ -93,6 +93,7 @@ function CashCard({ icon: Icon, label, value, accent, evidence, onOpen }) {
 
 export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments, onOverrideClick }) {
   const [evItem, setEvItem] = useState(null);
+  const [openStep, setOpenStep] = useState("Final eligible");
   if (running) return <Processing stepIdx={stepIdx} />;
   if (!decision) return <EmptyDecision onRun={onRun} hasDocuments={hasDocuments} />;
 
@@ -179,21 +180,81 @@ export function DecisionTab({ decision, running, stepIdx, onRun, hasDocuments, o
       {/* Eligibility waterfall */}
       {decision.eligibility_waterfall && (
         <div className="rounded-lg border border-border bg-card p-5" data-testid="eligibility-waterfall">
-          <h3 className="text-[14px] font-semibold text-foreground">Loan Eligibility Calculation</h3>
-          <p className="mt-0.5 text-[12px] text-muted-foreground">Evidence-based waterfall — the recommended amount reflects the binding constraint.</p>
-          <div className="mt-4 space-y-2">
-            {decision.eligibility_waterfall.map((w, i) => {
-              const last = i === decision.eligibility_waterfall.length - 1;
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-[14px] font-semibold text-foreground">Loan Eligibility Calculation</h3>
+            {decision.binding_constraint && (
+              <span className="shrink-0 rounded-full bg-accent/60 px-2.5 py-1 text-[11px] font-semibold text-accent-foreground" data-testid="binding-constraint">
+                Binding: {decision.binding_constraint}
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">Every ceiling is computed from the evidence; the sanction is the smallest binding ceiling, capped at the requested amount. Click any step to see the exact formula and numbers.</p>
+          <div className="mt-4 space-y-1.5">
+            {decision.eligibility_waterfall.map((w) => {
+              const isFinal = w.kind === "final";
+              const isResult = w.kind === "result";
+              const isBinding = w.binding;
+              const open = openStep === w.label;
+              const barTone = isFinal ? "bg-emerald-500" : isBinding ? "bg-amber-500" : isResult ? "bg-accent-foreground" : "bg-accent-foreground/60";
               return (
-                <div key={w.label} className="flex items-center gap-3">
-                  <span className="w-[150px] shrink-0 text-[12px] text-muted-foreground">{w.label}</span>
-                  <div className="flex-1 h-6 rounded bg-secondary overflow-hidden">
-                    <div className={`h-full rounded ${last ? "bg-emerald-500" : "bg-accent-foreground/70"}`} style={{ width: `${Math.max(4, (w.value / wfMax) * 100)}%` }} />
-                  </div>
-                  <span className="tnum w-[90px] text-right text-[13px] font-medium text-foreground">{formatLakh(w.value)}</span>
+                <div key={w.label} className={`rounded-lg border transition-colors ${open ? "border-accent-foreground/40 bg-accent/30" : isBinding ? "border-amber-200" : "border-border"}`}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenStep(open ? null : w.label)}
+                    data-testid={`wf-step-${w.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+                    className="flex w-full items-center gap-3 px-3 py-2 text-left"
+                  >
+                    <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`} strokeWidth={2} />
+                    <span className="flex w-[150px] shrink-0 items-center gap-1.5 text-[12px] text-muted-foreground">
+                      {w.label}
+                      {isBinding && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-700">binding</span>}
+                    </span>
+                    <div className="flex-1 h-6 rounded bg-secondary overflow-hidden">
+                      <div className={`h-full rounded ${barTone}`} style={{ width: `${Math.max(4, (w.value / wfMax) * 100)}%` }} />
+                    </div>
+                    <span className={`tnum w-[90px] text-right text-[13px] font-semibold ${isFinal ? "text-emerald-700" : "text-foreground"}`}>{formatLakh(w.value)}</span>
+                  </button>
+                  {open && (
+                    <div className="border-t border-border/60 px-3 py-3 pl-9" data-testid={`wf-detail-${w.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}>
+                      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Formula</div>
+                      <div className="mt-1 text-[12px] text-foreground">{w.formula}</div>
+                      <div className="mt-2 rounded-md border border-border bg-card px-3 py-2">
+                        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Calculation</div>
+                        <div className="tnum mt-1 text-[12px] font-medium text-foreground">{w.calculation}</div>
+                      </div>
+                      {Array.isArray(w.inputs) && w.inputs.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {w.inputs.map((inp, k) => (
+                            <div key={k} className="rounded border border-border bg-secondary/50 px-2 py-1">
+                              <div className="label-eyebrow">{inp.label}</div>
+                              <div className="tnum text-[12px] font-medium text-foreground">{inp.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
+          </div>
+
+          <div className="mt-4 rounded-lg border border-border bg-secondary/40 p-3" data-testid="eligibility-flow-summary">
+            <div className="label-eyebrow mb-2">How the number was reached</div>
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 text-[12px]">
+              <span className="rounded bg-card border border-border px-2 py-1 text-muted-foreground">Requested {formatLakh(decision.requested_amount)}</span>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={2} />
+              <span className="rounded bg-card border border-border px-2 py-1 text-muted-foreground">Ceilings computed</span>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={2} />
+              <span className="rounded bg-amber-50 border border-amber-200 px-2 py-1 font-medium text-amber-700">Binding: {decision.binding_constraint} {formatLakh(decision.eligible_amount)}</span>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={2} />
+              <span className="rounded bg-emerald-50 border border-emerald-200 px-2 py-1 font-semibold text-emerald-700">Recommended {formatLakh(decision.recommended_amount)}</span>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/60" strokeWidth={2} />
+              <span className={`rounded px-2 py-1 font-semibold ${decision.decision === "approve" ? "bg-emerald-100 text-emerald-700" : decision.decision === "review" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{decision.decision.toUpperCase()}</span>
+            </div>
+            <div className="mt-2.5 tnum text-[12px] text-foreground">
+              At {decision.roi?.toFixed(2)}% for {decision.tenure_months} months → EMI ₹{(decision.emi || 0).toLocaleString("en-IN")} · post-loan FOIR {((decision.post_loan_foir || 0) * 100).toFixed(1)}% · total interest {formatLakh(decision.total_interest)} · total repayment {formatLakh(decision.total_repayment)}
+            </div>
           </div>
         </div>
       )}
