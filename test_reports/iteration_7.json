@@ -1,0 +1,34 @@
+{
+  "summary": "Tested Contradiction Flags + Document Readiness feature end-to-end. Backend: 6/6 pytest tests pass (Arvind ready+no contradictions, Sri Lakshmi blocked+CONTRA-TURNOVER, BluePeak both contradictions+blocked, decision 400 for Lakshmi, decision 200 for Arvind, contradiction schema). Frontend: verified Credit Brain readiness panels, contradictions panel + CONTRA-TURNOVER / CONTRA-INCOME cards, Run Decision block toast, Trace 'Extraction' node reflects contradictions with detail listing, and the new doc-type classification dialog on Sri Lakshmi (select ITR -> upload -> readiness turns 'Ready to decide' -> Run Decision succeeds with 'Decision generated' toast). Found and fixed a backfill bug where existing decisions had `contradictions: null` stored so the `\"contradictions\" not in cb` guard did not backfill; now uses truthiness check.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/credit-brain/{id} + GET /api/applications/{id}", "issue": "Backfill guard used `'contradictions' not in cb` but stored decisions had the key present with value null, so contradictions never populated for seeded Sri Lakshmi / BluePeak. Fixed by treating null as absent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_contradictions_readiness.py",
+    "/app/test_reports/pytest/contradictions.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py backfill checks that use `'key' not in dict` are fragile against DB documents that store the key with a None/[] value; prefer `not cb.get(key)` (fixed for contradictions, consider same pattern review for evidence backfill).",
+    "credit_brain(application) recomputes financials from profile every request during backfill; consider persisting gst_turnover / itr_declared_income / banking_turnover into the stored credit_brain.financials so downstream displays and traces are consistent."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (2 lines: null-safe contradiction backfill in get_credit_brain and get_application)",
+    "/app/backend/tests/test_contradictions_readiness.py (new)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% of critical flows"},
+  "test_credentials": "Admin kiranmaadamshetti@gmail.com / LendSprint@2026 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Uploaded one classified ITR PDF to Sri Lakshmi (LS-2026-00125) via the new dialog; document count went 2 -> 3 and readiness turned Ready-to-decide. A new decision was generated as part of the successful Run Decision test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Sri Lakshmi now has an ITR document attached (post-test upload) so it is Ready-to-decide; if the block flow needs to be re-verified, either delete that ITR doc or use BluePeak Traders (still blocked, missing ITR + GST Returns). Arvind remains ready with no contradictions. Contradiction backfill returns data at data.credit_brain.contradictions (not top-level).",
+  "rca of the issue": "Bug: For seeded already-decided applications (Sri Lakshmi, BluePeak) the stored credit_brain document already had `contradictions: null` written to Mongo, so the guard `if 'contradictions' not in cb` at server.py:1106 and 1137 evaluated False and the contradictions were never backfilled via credit_brain(application). Repro: GET /api/credit-brain/0d2b4231-... returned contradictions: null. Fix: replaced `not in` with `not in or not cb.get(...)`. After fix, Sri Lakshmi returns one CONTRA-TURNOVER (28% review) and BluePeak returns CONTRA-TURNOVER (42% critical) + CONTRA-INCOME (33% review), matching the spec."
+}

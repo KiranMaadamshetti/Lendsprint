@@ -1101,9 +1101,9 @@ async def get_credit_brain(app_id: str, user: dict = Depends(get_current_user)):
     if decision and decision.get("credit_brain"):
         cb = decision["credit_brain"]
         seed = _seed_int(application["borrower_name"], application["loan_amount"])
-        if "evidence" not in cb and cb.get("financials"):
+        if not cb.get("evidence") and cb.get("financials"):
             cb["evidence"] = build_evidence(cb["financials"], seed)
-        if "contradictions" not in cb:
+        if not cb.get("contradictions"):
             cb["contradictions"] = credit_brain(application).get("contradictions", [])
         return {"application": application, "credit_brain": cb, "readiness": readiness, "computed": False}
     brain = credit_brain(application)
@@ -1132,9 +1132,9 @@ async def get_application(app_id: str, user: dict = Depends(get_current_user)):
     if decision and decision.get("credit_brain") and decision["credit_brain"].get("financials"):
         cb = decision["credit_brain"]
         seed = _seed_int(application["borrower_name"], application["loan_amount"])
-        if "evidence" not in cb:
+        if not cb.get("evidence"):
             cb["evidence"] = build_evidence(cb["financials"], seed)
-        if "contradictions" not in cb:
+        if not cb.get("contradictions"):
             cb["contradictions"] = credit_brain(application).get("contradictions", [])
     return {"application": application, "documents": documents, "decision": decision}
 

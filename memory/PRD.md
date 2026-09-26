@@ -73,6 +73,13 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## Contradiction Flags + Document Readiness (2026-06-18)
+Shipped + tested (iteration_7: 6/6 backend + full frontend E2E, 100%):
+- ✅ Cross-source contradiction detection in Credit Brain: GST turnover vs banking turnover (CONTRA-TURNOVER) and ITR income vs banking credits (CONTRA-INCOME), each with severity (critical/review) and % variance. Surfaced in a "Contradictions & Data Integrity" panel on the Credit Brain tab and in the Decision Trace Extraction node. A critical contradiction downgrades an approve→review.
+- ✅ Document readiness gating: mandatory docs (Bank Statement, ITR, GST Returns) required. run_decision returns 400 and writes a "Decision Blocked" audit when any mandatory doc is missing; "Document Readiness" checklist shown on Credit Brain tab. New per-file doc-type classification dialog on the Application Detail Add-documents flow so users can satisfy the mandatory set.
+- Backend: build_contradictions(), evaluate_document_readiness(), REQUIRED_DOC_MAP, DEFAULT_POLICY.mandatory_documents; credit_brain adds gst_turnover/banking_turnover/itr_declared_income + contradictions; endpoints return readiness and null-safe backfill evidence/contradictions for pre-existing decisions.
+- Demo: Arvind ready+clean; Sri Lakshmi 28% turnover contradiction + blocked (missing ITR); BluePeak critical 42% turnover + 33% income contradiction + blocked (missing ITR, GST).
+
 ## Decision Trace (2026-06-18)
 Shipped + tested (iteration_6, frontend-only, 95% — no bugs):
 - ✅ New "Trace" tab on Application Detail: interactive 6-stage flow Documents → Extraction → Credit Brain → Policy → Structuring → Decision. Clickable nodes with status dots; each opens a detail panel (docs list, extracted financials, PD/grade/FOIR/DSCR + signals, policy rule table, eligibility waterfall + terms, final decision). Built entirely from existing GET /api/applications/{id} data; empty state prompts Run Decision. Component: DecisionTraceTab.js.
