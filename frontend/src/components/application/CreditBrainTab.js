@@ -71,9 +71,20 @@ export function CreditBrainTab({ applicationId }) {
 
   return (
     <div className="space-y-4 animate-fade-up" data-testid="credit-brain-content">
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3">
-        <Brain className="h-4 w-4 text-accent-foreground" strokeWidth={1.8} />
-        <span className="text-[13px] text-muted-foreground">Credit Brain provides structured evidence only. Click any figure to trace its source, page and calculation.</span>
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Brain className="h-4 w-4 text-accent-foreground" strokeWidth={1.8} />
+          <span className="text-[13px] text-muted-foreground">Credit Brain provides structured evidence only. Click any figure to trace its source, page and calculation.</span>
+        </div>
+        {brain.extraction_source === "ai" ? (
+          <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700" data-testid="extraction-badge">
+            AI-extracted from documents{brain.extraction_confidence != null ? ` · ${Math.round(brain.extraction_confidence * 100)}% confidence` : ""}
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-full bg-secondary px-2.5 py-1 text-[11px] font-medium text-muted-foreground" data-testid="extraction-badge">
+            Estimated · no parsed documents
+          </span>
+        )}
       </div>
 
       <div className="rounded-lg border border-border bg-card p-5">

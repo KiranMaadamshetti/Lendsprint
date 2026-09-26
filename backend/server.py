@@ -415,12 +415,12 @@ def _ev_page(seed: int, salt: int, mx: int = 6) -> str:
     return f"p.{1 + ((seed >> salt) % mx)}"
 
 
-def build_evidence(f: dict, seed: int) -> dict:
+def build_evidence(f: dict, seed: int, conf_override: float = None) -> dict:
     """Deterministic source-attribution + calculation trace for each financial figure."""
     def L(v):
         return f"₹{lakh(v)} L"
 
-    return {
+    out = {
         "annual_turnover": {
             "label": "Annual Turnover", "formula": "Avg monthly credits × 12 × 0.94 (GST-adjusted)",
             "calculation": f"{L(f['avg_monthly_credits'])} × 12 × 0.94 = {L(f['annual_turnover'])}",
@@ -487,6 +487,10 @@ def build_evidence(f: dict, seed: int) -> dict:
             "inputs": [{"label": "Returns", "value": str(f['nach_bounces'])}],
             "source": "Bank Statement", "page": _ev_page(seed, 13), "confidence": _ev_conf(seed, 13)},
     }
+    if conf_override is not None:
+        for v in out.values():
+            v["confidence"] = round(float(conf_override), 2)
+    return out
 
 
 REQUIRED_DOC_MAP = {"Bank Statement": "bank_statement", "ITR": "itr", "GST Returns": "gst",
@@ -549,44 +553,172 @@ def evaluate_document_readiness(documents: list, policy: dict) -> dict:
             "present_count": len([c for c in checklist if c["present"]])}
 
 
-def credit_brain(application: dict) -> dict:
-    """Derive structured financial evidence + signals (mock intelligence layer)."""
-    borrower = application["borrower_name"]
-    amount = application["loan_amount"]
-    key = borrower.strip().lower()
-    seed = _seed_int(borrower, amount)
-    base = compute_decision(borrower, application["loan_type"], amount)
-    prof = KNOWN_PROFILES.get(key, {})
+def extract_pdf_text(path: str) -> str:
+    """Extract raw text from an uploaded PDF (first pages)."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(path)
+        parts = [(page.extract_text() or "") for page in reader.pages[:15]]
+        return "\n".join(parts).strip()
+    except Exception as e:
+        logger.warning(f"PDF text extraction failed for {path}: {e}")
+        return ""
 
-    income = base["cash_flow_summary"]["income"]
-    obligations = base["cash_flow_summary"]["obligations"]
+
+async def llm_extract_financials(application: dict, docs_text: list) -> Optional[dict]:
+    """Use the LLM to extract structured underwriting financials from document text."""
+    import json as _json
+    combined = "\n\n".join(f"=== {d['label']} ===\n{d['text'][:6000]}" for d in docs_text if d.get("text"))
+    if not combined.strip():
+        return None
+    schema = ('{"avg_monthly_credits":int,"monthly_obligations":int,"existing_emi":int,'
+              '"avg_monthly_balance":int,"banking_turnover":int,"gst_turnover":int,'
+              '"itr_declared_income":int,"annual_turnover":int,"business_vintage_months":int,'
+              '"cibil":int,"cheque_bounces":int,"nach_bounces":int,"banking_history_months":int,'
+              '"industry":str,"confidence":float}')
+    prompt = (
+        "You are a credit-underwriting data extraction engine for an Indian NBFC. From the borrower documents "
+        "below (synthetic demo data), extract the financial fields. Money values in INR as plain integers "
+        "(no commas/symbols). If a field is absent, estimate conservatively from what is available and lower the "
+        "confidence. banking_turnover = annualised total bank credits; gst_turnover = turnover declared in GST "
+        "returns; itr_declared_income = annual income declared in ITR; confidence is 0-1 overall extraction quality. "
+        f"Return ONLY minified JSON matching this schema: {schema}\n\nDOCUMENTS:\n{combined}"
+    )
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"extract-{application['id']}",
+                       system_message="You extract structured financial data from documents and reply with strict minified JSON only.").with_model("openai", "gpt-5.4")
+        resp = await chat.send_message(UserMessage(text=prompt))
+        text = (resp if isinstance(resp, str) else str(resp)).strip()
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            return None
+        data = _json.loads(m.group(0))
+        conf = data.pop("confidence", 0.85)
+        out = {}
+        for k, v in data.items():
+            if k == "industry":
+                out[k] = str(v)
+            else:
+                try:
+                    out[k] = int(round(float(v)))
+                except (TypeError, ValueError):
+                    continue
+        if not out.get("avg_monthly_credits"):
+            return None
+        out["_confidence"] = round(float(conf), 2)
+        out["_source"] = "ai"
+        return out
+    except Exception as e:
+        logger.warning(f"LLM financial extraction failed: {e}")
+        return None
+
+
+async def refresh_extraction(app_id: str) -> Optional[dict]:
+    """Read all uploaded PDFs for an application and (re)extract financials via the LLM."""
+    application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+    if not application:
+        return None
+    docs = await db.documents.find({"application_id": app_id}).to_list(100)
+    texts = []
+    for d in docs:
+        p = d.get("file_path")
+        if p and os.path.exists(p):
+            t = extract_pdf_text(p)
+            if t:
+                texts.append({"label": DOC_TYPE_LABELS.get(d.get("doc_type"), d.get("doc_type")), "text": t})
+    if not texts:
+        return None
+    ef = await llm_extract_financials(application, texts)
+    if ef:
+        await db.applications.update_one({"id": app_id}, {"$set": {"extracted_financials": ef}})
+    return ef
+
+
+def _pd_from_financials(fin: dict) -> float:
+    """Transparent, explainable PD from real metrics (not a hardcoded lookup)."""
+    score = 0.05
+    score += min(max(fin["foir_before"], 0.0), 1.0) * 0.28
+    score += max(0.0, (760 - fin["cibil"])) / 760 * 0.30
+    score += max(0.0, (1.8 - min(fin["dscr"], 3.0))) * 0.06
+    score += max(0.0, (36 - fin["business_vintage_months"])) / 36 * 0.12
+    score += min(fin["cheque_bounces"], 6) * 0.025 + min(fin["nach_bounces"], 6) * 0.02
+    if fin["net_cash_flow"] <= 0:
+        score += 0.15
+    bt = max(fin.get("banking_turnover", 0), 1)
+    gt = fin.get("gst_turnover", bt)
+    score += min(abs(bt - gt) / bt, 0.6) * 0.10
+    return round(max(0.03, min(0.80, score)), 3)
+
+
+def _raw_financials(application: dict, seed: int) -> dict:
+    """Extracted (AI) financials when available, else a deterministic estimate for docs-less demo rows."""
+    ef = application.get("extracted_financials")
+    if ef and ef.get("avg_monthly_credits"):
+        income = int(ef["avg_monthly_credits"])
+        obligations = int(ef.get("monthly_obligations") or round(income * 0.35))
+        existing_emi = int(ef.get("existing_emi") or round(obligations * 0.55))
+        avg_balance = int(ef.get("avg_monthly_balance") or round(income * 0.5))
+        annual_credits = int(ef.get("banking_turnover") or income * 12)
+        banking_turnover = annual_credits
+        gst_turnover = int(ef.get("gst_turnover") or annual_credits)
+        itr_declared_income = int(ef.get("itr_declared_income") or annual_credits)
+        revenue = int(ef.get("annual_turnover") or gst_turnover)
+        vintage = int(ef.get("business_vintage_months") or 36)
+        cibil = int(ef.get("cibil") or 700)
+        cheque_bounces = int(ef.get("cheque_bounces") or 0)
+        nach_bounces = int(ef.get("nach_bounces") or 0)
+        banking_months = int(ef.get("banking_history_months") or 12)
+        industry = ef.get("industry") or "Not specified"
+        source, confidence = "ai", float(ef.get("_confidence") or 0.9)
+    else:
+        prof = KNOWN_PROFILES.get(application["borrower_name"].strip().lower(), {})
+        income = prof.get("income", int(round(application["loan_amount"] * (0.34 + (seed % 8) / 100.0))))
+        obligations = prof.get("obligations", int(round(income * (0.30 + (seed % 15) / 100.0))))
+        existing_emi = int(round(obligations * 0.55))
+        avg_balance = int(round(income * (0.45 + (seed % 20) / 100)))
+        annual_credits = income * 12
+        banking_turnover = annual_credits
+        gst_turnover = int(round(banking_turnover * round(1 - (seed % 30) / 100.0, 2)))
+        itr_declared_income = int(round(annual_credits * round(1 - ((seed >> 5) % 26) / 100.0, 2)))
+        revenue = int(round(annual_credits * 0.94))
+        vintage = prof.get("vintage", 24 + (seed % 96))
+        cibil = prof.get("cibil", 640 + (seed % 160))
+        cheque_bounces = prof.get("cheque_bounces", seed % 4)
+        nach_bounces = prof.get("nach_bounces", seed % 3)
+        banking_months = 12
+        industry = prof.get("industry", "Manufacturing")
+        source, confidence = "estimate", None
     net = income - obligations
-    existing_emi = int(round(obligations * 0.55))
-    annual_credits = income * 12
-    revenue = int(round(annual_credits * 0.94))
-    avg_balance = int(round(income * (0.45 + (seed % 20) / 100)))
-    vintage = prof.get("vintage", 24 + (seed % 96))
-    cibil = prof.get("cibil", 640 + (seed % 160))
-    cheque_bounces = prof.get("cheque_bounces", seed % 4)
-    nach_bounces = prof.get("nach_bounces", seed % 3)
     dscr = round(net / existing_emi, 2) if existing_emi else 2.5
     foir_before = round(obligations / income, 3) if income else 0
-    banking_months = 12
-    banking_turnover = annual_credits
-    _gst_ratio = {"arvind engineering pvt ltd": 0.97, "sri lakshmi components": 0.72,
-                  "bluepeak traders": 0.58}.get(key, round(1 - (seed % 30) / 100.0, 2))
-    gst_turnover = int(round(banking_turnover * _gst_ratio))
-    _itr_ratio = {"arvind engineering pvt ltd": 0.96, "sri lakshmi components": 0.81,
-                  "bluepeak traders": 0.67}.get(key, round(1 - ((seed >> 5) % 26) / 100.0, 2))
-    itr_declared_income = int(round(annual_credits * _itr_ratio))
+    return {
+        "avg_monthly_credits": income, "monthly_obligations": obligations, "existing_emi": existing_emi,
+        "avg_monthly_balance": avg_balance, "annual_credits": annual_credits, "banking_turnover": banking_turnover,
+        "gst_turnover": gst_turnover, "itr_declared_income": itr_declared_income, "annual_turnover": revenue,
+        "revenue": revenue, "business_vintage_months": vintage, "cibil": cibil, "cheque_bounces": cheque_bounces,
+        "nach_bounces": nach_bounces, "banking_history_months": banking_months, "net_cash_flow": net,
+        "dscr": dscr, "foir_before": foir_before, "industry": industry,
+        "_source": source, "_confidence": confidence,
+    }
+
+
+def credit_brain(application: dict) -> dict:
+    """Derive structured financial evidence + signals from AI-extracted (or estimated) data."""
+    seed = _seed_int(application["borrower_name"], application["loan_amount"])
+    r = _raw_financials(application, seed)
+    income, obligations, net = r["avg_monthly_credits"], r["monthly_obligations"], r["net_cash_flow"]
+    existing_emi, dscr, foir_before = r["existing_emi"], r["dscr"], r["foir_before"]
+    cheque_bounces, nach_bounces = r["cheque_bounces"], r["nach_bounces"]
+    vintage, cibil, banking_months = r["business_vintage_months"], r["cibil"], r["banking_history_months"]
+    banking_turnover, gst_turnover, itr_declared_income = r["banking_turnover"], r["gst_turnover"], r["itr_declared_income"]
+    revenue, avg_balance, annual_credits = r["annual_turnover"], r["avg_monthly_balance"], r["annual_credits"]
+
+    pd_score = _pd_from_financials(r)
     contradictions = build_contradictions(banking_turnover, gst_turnover, itr_declared_income, annual_credits)
 
-    # monthly cash-flow trend (last 6 months)
     months = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"]
-    trend = []
-    for i, m in enumerate(months):
-        wobble = ((seed >> (i * 3)) % 12 - 6) / 100.0
-        trend.append({"month": m, "value": int(round(net * (1 + wobble)))})
+    trend = [{"month": m, "value": int(round(net * (1 + ((seed >> (i * 3)) % 12 - 6) / 100.0)))} for i, m in enumerate(months)]
 
     positive, risk = [], []
     if net > 0 and dscr >= 1.5:
@@ -604,31 +736,28 @@ def credit_brain(application: dict) -> dict:
     if cibil < 680:
         risk.append({"label": "Sub-threshold bureau score", "evidence": f"Bureau score of {cibil}.", "source": "Credit Bureau", "severity": "critical"})
 
+    fin = {
+        "revenue": revenue, "annual_credits": annual_credits, "avg_monthly_credits": income,
+        "avg_monthly_balance": avg_balance, "existing_emi": existing_emi,
+        "monthly_obligations": obligations, "net_cash_flow": net, "foir_before": foir_before,
+        "dscr": dscr, "banking_history_months": banking_months, "cheque_bounces": cheque_bounces,
+        "nach_bounces": nach_bounces, "business_vintage_months": vintage, "cibil": cibil,
+        "annual_turnover": revenue, "industry": r["industry"],
+        "gst_turnover": gst_turnover, "banking_turnover": banking_turnover,
+        "itr_declared_income": itr_declared_income,
+    }
     return {
-        "pd_score": base["pd_score"],
-        "financials": {
-            "revenue": revenue, "annual_credits": annual_credits, "avg_monthly_credits": income,
-            "avg_monthly_balance": avg_balance, "existing_emi": existing_emi,
-            "monthly_obligations": obligations, "net_cash_flow": net, "foir_before": foir_before,
-            "dscr": dscr, "banking_history_months": banking_months, "cheque_bounces": cheque_bounces,
-            "nach_bounces": nach_bounces, "business_vintage_months": vintage, "cibil": cibil,
-            "annual_turnover": revenue, "industry": prof.get("industry", "Manufacturing"),
-            "gst_turnover": gst_turnover, "banking_turnover": banking_turnover,
-            "itr_declared_income": itr_declared_income,
-        },
+        "pd_score": pd_score,
+        "financials": fin,
         "cash_flow_trend": trend,
         "positive_signals": positive,
         "risk_signals": risk,
         "contradictions": contradictions,
-        "evidence": build_evidence({
-            "revenue": revenue, "annual_credits": annual_credits, "avg_monthly_credits": income,
-            "avg_monthly_balance": avg_balance, "existing_emi": existing_emi,
-            "monthly_obligations": obligations, "net_cash_flow": net, "foir_before": foir_before,
-            "dscr": dscr, "banking_history_months": banking_months, "cheque_bounces": cheque_bounces,
-            "nach_bounces": nach_bounces, "business_vintage_months": vintage, "cibil": cibil,
-            "annual_turnover": revenue,
-        }, seed),
+        "extraction_source": r["_source"],
+        "extraction_confidence": r["_confidence"],
+        "evidence": build_evidence(fin, seed, r["_confidence"]),
     }
+
 
 
 def evaluate_policy(brain: dict, policy: dict, post_loan_foir: float) -> dict:
@@ -716,10 +845,19 @@ def compute_full_decision(application: dict, policy: dict, force_known: bool = T
     crit_contra = [c for c in brain.get("contradictions", []) if c["severity"] == "critical"]
     if crit_contra and decision == "approve":
         decision = "review"
-    if key in KNOWN_PROFILES and force_known:
-        decision = KNOWN_PROFILES[key]["decision"]
 
-    base = compute_decision(application["borrower_name"], application["loan_type"], requested)
+    if decision == "approve":
+        codes = ["STRONG_CF", "GOOD_COVERAGE", "STABLE_BANKING"]
+    elif decision == "review":
+        codes = ["HIGH_UTIL", "REPAY_IRREG", "MODERATE_CF"]
+    else:
+        codes = ["WEAK_CF", "HIGH_LEVERAGE", "NEG_TREND"]
+    reason_codes = [_reason(c) for c in codes]
+    cash_flow_summary = {
+        "income": f["avg_monthly_credits"], "obligations": f["monthly_obligations"],
+        "net": f["net_cash_flow"],
+        "coverage": round(f["net_cash_flow"] / f["monthly_obligations"], 2) if f["monthly_obligations"] else 0,
+    }
     return {
         "pd_score": pd_score, "risk_grade": grade, "decision": decision,
         "requested_amount": requested, "eligible_amount": final_eligible,
@@ -736,8 +874,8 @@ def compute_full_decision(application: dict, policy: dict, force_known: bool = T
             {"label": "Final eligible", "value": final_eligible},
             {"label": "Recommended amount", "value": recommended},
         ],
-        "reason_codes": base["reason_codes"],
-        "cash_flow_summary": base["cash_flow_summary"],
+        "reason_codes": reason_codes,
+        "cash_flow_summary": cash_flow_summary,
         "positive_signals": brain["positive_signals"],
         "risk_signals": brain["risk_signals"],
         "credit_brain": brain,
@@ -1194,6 +1332,14 @@ async def upload_documents(app_id: str, files: List[UploadFile] = File(...),
 
     await write_audit(app_id, "Documents Uploaded", user.get("name", "Analyst"),
                       {"count": len(saved), "types": [s["doc_type"] for s in saved]})
+    try:
+        ef = await refresh_extraction(app_id)
+        if ef:
+            await write_audit(app_id, "Documents Analysed", "Credit Brain",
+                              {"source": "ai", "confidence": ef.get("_confidence"),
+                               "fields": [k for k in ef.keys() if not k.startswith("_")]})
+    except Exception as e:
+        logger.warning(f"Post-upload extraction failed: {e}")
     return saved
 
 
@@ -1241,7 +1387,10 @@ async def run_decision(app_id: str, options: DecisionOptions = DecisionOptions()
         raise HTTPException(status_code=400,
                             detail=f"Decision blocked — missing mandatory document(s): {', '.join(readiness['missing'])}. Upload and classify them to proceed.")
 
-    result = compute_decision(application["borrower_name"], application["loan_type"], application["loan_amount"])
+    if not application.get("extracted_financials"):
+        await refresh_extraction(app_id)
+        application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+
     full = compute_full_decision(application, policy)
     detailed = build_detailed_memo(application, policy, full)
 
