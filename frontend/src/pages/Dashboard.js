@@ -88,12 +88,38 @@ export default function Dashboard() {
     return () => clearTimeout(t);
   }, [load]);
 
+  const pollSeed = useCallback(async (refs) => {
+    const deadline = Date.now() + 150000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 4000));
+      let all = [];
+      try {
+        all = await getApplications({});
+      } catch {
+        continue;
+      }
+      await load();
+      const seeded = all.filter((x) => refs.includes(x.reference));
+      if (seeded.length >= refs.length && seeded.every((x) => x.status !== "pending")) {
+        toast.success("Sample portfolio ready — AI decisions generated");
+        return;
+      }
+    }
+    toast.message("Still analysing — refresh in a moment to see the decisions.");
+  }, [load]);
+
   const handleSeed = async () => {
     setSeeding(true);
     try {
       const res = await seedDemoData();
-      toast.success(res.created ? "Sample portfolio loaded" : "Sample portfolio already present");
-      await load();
+      if (res.created) {
+        toast.success("Analysing documents with AI — this takes a few seconds…");
+        await load();
+        await pollSeed(res.refs || []);
+      } else {
+        toast.success("Sample portfolio already present");
+        await load();
+      }
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {

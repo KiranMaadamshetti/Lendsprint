@@ -549,7 +549,7 @@ export default function ApplicationDetail() {
           <DialogHeader>
             <DialogTitle>Classify documents</DialogTitle>
             <DialogDescription>
-              Assign a type to each file. Bank Statement, ITR and GST Returns are mandatory before a decision can run.
+              Assign a type to each file — KYC, CIBIL, Bank Statement, ITR, GST, Purchase Bills or Sales Bills.
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[50vh] space-y-2 overflow-y-auto thin-scroll py-1">
@@ -560,9 +560,13 @@ export default function ApplicationDetail() {
                 <Select value={p.docType} onValueChange={(v) => setPending((arr) => arr.map((x) => (x.id === p.id ? { ...x, docType: v } : x)))}>
                   <SelectTrigger className="h-8 w-[150px] text-[12px]" data-testid={`doc-type-select-${p.id}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="kyc">KYC</SelectItem>
+                    <SelectItem value="cibil">CIBIL Report</SelectItem>
                     <SelectItem value="bank_statement">Bank Statement</SelectItem>
                     <SelectItem value="itr">ITR</SelectItem>
                     <SelectItem value="gst">GST</SelectItem>
+                    <SelectItem value="purchase_bills">Purchase Bills</SelectItem>
+                    <SelectItem value="sales_bills">Sales Bills</SelectItem>
                     <SelectItem value="salary_slip">Salary Slip</SelectItem>
                   </SelectContent>
                 </Select>

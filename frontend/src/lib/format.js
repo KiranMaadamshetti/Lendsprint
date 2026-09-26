@@ -40,6 +40,10 @@ export const DOC_TYPE_LABEL = {
   itr: "ITR",
   gst: "GST",
   salary_slip: "Salary Slip",
+  kyc: "KYC",
+  cibil: "CIBIL Report",
+  purchase_bills: "Purchase Bills",
+  sales_bills: "Sales Bills",
 };
 
 export function pct(v, digits = 1) {

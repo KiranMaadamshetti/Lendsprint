@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { ArrowLeft, UploadCloud, FileText, X, Loader2, ShieldCheck } from "lucide-react";
 
-const DOC_TYPES = ["bank_statement", "itr", "gst", "salary_slip"];
+const DOC_TYPES = ["kyc", "cibil", "bank_statement", "itr", "gst", "purchase_bills", "sales_bills", "salary_slip"];
 
 export default function NewApplication() {
   const navigate = useNavigate();
@@ -167,7 +167,7 @@ export default function NewApplication() {
               <UploadCloud className="h-5 w-5 text-accent-foreground" strokeWidth={1.8} />
             </div>
             <div className="mt-3 text-[13px] font-medium text-foreground">Drag and drop PDFs here or browse files</div>
-            <div className="mt-1 text-[12px] text-muted-foreground">PDF only · Bank Statement, ITR, GST, Salary Slip</div>
+            <div className="mt-1 text-[12px] text-muted-foreground">PDF only · KYC, CIBIL, Bank Statement, ITR, GST, Purchase &amp; Sales Bills</div>
             <input
               ref={fileInput}
               type="file"

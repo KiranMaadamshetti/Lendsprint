@@ -497,7 +497,9 @@ def build_evidence(f: dict, seed: int, conf_override: float = None) -> dict:
 
 
 REQUIRED_DOC_MAP = {"Bank Statement": "bank_statement", "ITR": "itr", "GST Returns": "gst",
-                    "GST": "gst", "Salary Slip": "salary_slip"}
+                    "GST": "gst", "Salary Slip": "salary_slip", "KYC": "kyc",
+                    "CIBIL Report": "cibil", "Purchase Bills": "purchase_bills",
+                    "Sales Bills": "sales_bills"}
 
 
 def build_contradictions(banking_turnover: int, gst_turnover: int, itr_income: int, banking_income_annual: int) -> list:
@@ -1502,7 +1504,9 @@ async def get_audit(app_id: str, user: dict = Depends(get_current_user)):
     return events
 
 
-DOC_TYPE_LABELS = {"bank_statement": "Bank Statement", "itr": "ITR", "gst": "GST", "salary_slip": "Salary Slip"}
+DOC_TYPE_LABELS = {"bank_statement": "Bank Statement", "itr": "ITR", "gst": "GST",
+                   "salary_slip": "Salary Slip", "kyc": "KYC", "cibil": "CIBIL Report",
+                   "purchase_bills": "Purchase Bills", "sales_bills": "Sales Bills"}
 
 
 @api_router.post("/applications/{app_id}/documents", status_code=201)
@@ -1869,78 +1873,376 @@ async def ask_brain(app_id: str, body: AskIn, user: dict = Depends(get_current_u
 # ---------------------------------------------------------------------------
 # Demo seed
 # ---------------------------------------------------------------------------
-SEED_APPS = [
-    {"reference": "LS-2026-00124", "borrower_name": "Arvind Engineering Pvt Ltd", "loan_type": "MSME",
-     "loan_amount": 3500000, "decide": True,
-     "docs": [("bank_statement", "HDFC_Bank_Statement_FY25.pdf"), ("itr", "ITR_FY25.pdf"),
-              ("gst", "GST_Returns_FY25.pdf"), ("salary_slip", "Promoter_Remuneration.pdf")]},
-    {"reference": "LS-2026-00125", "borrower_name": "Sri Lakshmi Components", "loan_type": "business",
-     "loan_amount": 2250000, "decide": True,
-     "docs": [("bank_statement", "ICICI_Bank_Statement.pdf"), ("gst", "GST_Returns.pdf")]},
-    {"reference": "LS-2026-00126", "borrower_name": "BluePeak Traders", "loan_type": "business",
-     "loan_amount": 1500000, "decide": False, "docs": []},
-]
+def _seed_render_pdf(lines: list) -> bytes:
+    """Render a simple text PDF (synthetic demo document) to bytes via reportlab."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    y = 800
+    for ln in lines:
+        c.drawString(50, y, ln)
+        y -= 15
+        if y < 60:
+            c.showPage()
+            y = 800
+    c.save()
+    return buf.getvalue()
+
+
+def _seed_portfolio() -> list:
+    """Three genuine-document demo borrowers: strong (approve), risky (reject), borderline (review)."""
+    nova = {
+        "reference": "LS-2026-00201", "borrower_name": "Nova Precision Tools Pvt Ltd",
+        "loan_type": "MSME", "loan_amount": 4000000, "target": "approve",
+        "docs": [
+            ("kyc", "Nova_KYC.pdf", [
+                "KYC / BORROWER PROFILE (SYNTHETIC DEMO DATA)",
+                "Entity: Nova Precision Tools Pvt Ltd", "Constitution: Private Limited Company",
+                "PAN: AABCN1234K   GSTIN: 27AABCN1234K1Z5   CIN: U29100MH2019PTC099887",
+                "Registered office: Plot 21, MIDC Bhosari, Pune, Maharashtra 411026",
+                "Promoters: R. Iyer (MD), S. Iyer (Director) - both KYC verified",
+                "Nature of business: Precision Engineering / CNC Machining",
+                "Business commencement: registered 84 months ago (Apr-2019)",
+            ]),
+            ("cibil", "Nova_CIBIL.pdf", [
+                "CIBIL / TRANSUNION COMMERCIAL CREDIT REPORT (SYNTHETIC DEMO DATA)",
+                "Entity: Nova Precision Tools Pvt Ltd", "CIBIL Score: 771",
+                "Total active loans: 3   Hard enquiries (last 6 months): 1",
+                "Total sanctioned: INR 1,20,00,000   Total outstanding: INR 61,00,000",
+                "Total overdue amount: INR 0   Worst DPD across accounts: 0 days",
+                "Repayment track record: excellent - all accounts standard, zero delinquency.",
+                "TRADELINES:",
+                "  1. HDFC Bank | Equipment Loan | Sanctioned 50,00,000 | Outstanding 28,00,000 | EMI 1,25,000 | DPD 0 | Active",
+                "  2. Bajaj Finserv | Machinery Loan | Sanctioned 40,00,000 | Outstanding 21,00,000 | EMI 55,000 | DPD 0 | Active",
+                "  3. ICICI Bank | Business Loan | Sanctioned 30,00,000 | Outstanding 12,00,000 | EMI 30,000 | DPD 0 | Active",
+            ]),
+            ("bank_statement", "Nova_Bank_Statement.pdf", [
+                "HDFC BANK - CURRENT ACCOUNT STATEMENT (SYNTHETIC DEMO DATA)",
+                "Account holder: Nova Precision Tools Pvt Ltd    Account: XXXX4471",
+                "Statement period: 01-Apr-2025 to 31-Mar-2026 (12 months)",
+                "Average monthly credits (inflows): INR 18,50,000",
+                "Average monthly balance: INR 9,20,000",
+                "Total annual bank credits (turnover): INR 2,22,00,000",
+                "Total monthly EMI outflow (existing loans): INR 2,10,000",
+                "Average monthly fixed obligations (EMIs + operating fixed costs): INR 5,60,000",
+                "Inflow to outflow ratio: 1.18",
+                "MONTH-WISE SUMMARY (credits / debits / closing balance in INR):",
+                "  Apr-2025: 19,20,000 / 17,80,000 / 8,90,000",
+                "  May-2025: 17,90,000 / 16,40,000 / 9,10,000",
+                "  Jun-2025: 18,60,000 / 17,10,000 / 9,40,000",
+                "  Jul-2025: 20,10,000 / 18,20,000 / 9,80,000",
+                "  Aug-2025: 17,40,000 / 16,90,000 / 8,70,000",
+                "  Sep-2025: 18,80,000 / 17,50,000 / 9,20,000",
+                "  Oct-2025: 19,60,000 / 18,00,000 / 9,60,000",
+                "  Nov-2025: 18,20,000 / 16,80,000 / 9,30,000",
+                "  Dec-2025: 20,40,000 / 18,60,000 / 9,90,000",
+                "  Jan-2026: 17,80,000 / 16,50,000 / 8,80,000",
+                "  Feb-2026: 18,10,000 / 17,00,000 / 9,10,000",
+                "  Mar-2026: 19,90,000 / 18,40,000 / 9,50,000",
+                "RECURRING EMI DEBITS: HDFC Equipment 1,25,000; Bajaj Machinery 55,000; ICICI Business 30,000 (3 EMIs, total 2,10,000/mo)",
+                "TOP CREDIT SOURCES: Larsen & Toubro 84,00,000; Tata Motors 62,00,000; Ashok Leyland 38,00,000",
+                "Cheque returns: 0   NACH failures: 0",
+                "No gambling, betting or unexplained cash transactions observed.",
+                "Cash flow pattern: consistent B2B receivables, healthy surplus, disciplined EMIs.",
+            ]),
+            ("itr", "Nova_ITR.pdf", [
+                "INCOME TAX RETURN - ITR (SYNTHETIC DEMO DATA)",
+                "Assessee: Nova Precision Tools Pvt Ltd   AY: 2025-26",
+                "Declared gross annual business income: INR 2,05,00,000",
+                "Nature of business: Precision Engineering / CNC Machining",
+                "Business commencement: registered 84 months ago",
+            ]),
+            ("gst", "Nova_GST.pdf", [
+                "GST RETURNS SUMMARY GSTR-3B (SYNTHETIC DEMO DATA)",
+                "Legal name: Nova Precision Tools Pvt Ltd",
+                "Aggregate annual turnover declared: INR 2,15,00,000",
+                "Filing status: all periods filed, no defaults",
+            ]),
+            ("purchase_bills", "Nova_Purchase_Bills.pdf", [
+                "PURCHASE INVOICES SUMMARY (SYNTHETIC DEMO DATA)",
+                "Buyer: Nova Precision Tools Pvt Ltd   Period: FY 2025-26",
+                "Total purchases (raw material + consumables): INR 96,00,000",
+                "  INV-P/2025/118 | JSW Steel Ltd | Alloy steel | 42,00,000",
+                "  INV-P/2025/204 | Sandvik Tools | Carbide inserts | 21,00,000",
+                "  INV-P/2025/331 | Kennametal India | Tooling | 18,00,000",
+                "  INV-P/2025/402 | Local consumables | 15,00,000",
+                "All purchases GST-compliant with input tax credit availed.",
+            ]),
+            ("sales_bills", "Nova_Sales_Bills.pdf", [
+                "SALES INVOICES SUMMARY (SYNTHETIC DEMO DATA)",
+                "Seller: Nova Precision Tools Pvt Ltd   Period: FY 2025-26",
+                "Total sales / receivables raised: INR 2,18,00,000",
+                "  INV-S/2025/551 | Larsen & Toubro Ltd | Machined components | 84,00,000",
+                "  INV-S/2025/612 | Tata Motors | Precision parts | 62,00,000",
+                "  INV-S/2025/708 | Ashok Leyland | Assemblies | 38,00,000",
+                "  INV-S/2025/766 | Assorted OEM buyers | 34,00,000",
+                "Receivable ageing healthy; majority collected within 45 days.",
+            ]),
+        ],
+    }
+    skyline = {
+        "reference": "LS-2026-00202", "borrower_name": "Skyline Traders",
+        "loan_type": "business", "loan_amount": 3500000, "target": "reject",
+        "docs": [
+            ("kyc", "Skyline_KYC.pdf", [
+                "KYC / BORROWER PROFILE (SYNTHETIC DEMO DATA)",
+                "Entity: Skyline Traders   Constitution: Proprietorship",
+                "PAN: AFGPS8899L   GSTIN: 27AFGPS8899L1Z2",
+                "Proprietor: M. Khanna - KYC verified", "Address: Andheri East, Mumbai 400069",
+                "Nature of business: Wholesale trading (electronics)",
+                "Business commencement: registered 15 months ago",
+            ]),
+            ("cibil", "Skyline_CIBIL.pdf", [
+                "CIBIL / TRANSUNION COMMERCIAL CREDIT REPORT (SYNTHETIC DEMO DATA)",
+                "Entity: Skyline Traders", "CIBIL Score: 648",
+                "Total active loans: 4   Hard enquiries (last 6 months): 6",
+                "Total sanctioned: INR 95,00,000   Total outstanding: INR 72,00,000",
+                "Total overdue amount: INR 3,20,000   Worst DPD across accounts: 62 days",
+                "Repayment track record: multiple late payments, one account 60+ DPD.",
+                "TRADELINES:",
+                "  1. IIFL Finance | Business Loan | Sanctioned 45,00,000 | Outstanding 38,00,000 | EMI 1,95,000 | DPD 62 | Overdue",
+                "  2. Kotak Mahindra | Personal Loan | Sanctioned 20,00,000 | Outstanding 16,00,000 | EMI 85,000 | DPD 15 | Active",
+                "  3. HDFC Bank | Credit Card | Sanctioned 10,00,000 | Outstanding 9,50,000 | EMI 40,000 | DPD 30 | Active",
+                "  4. Bajaj Finserv | Consumer Durable | Sanctioned 20,00,000 | Outstanding 8,50,000 | EMI 22,000 | DPD 0 | Active",
+            ]),
+            ("bank_statement", "Skyline_Bank_Statement.pdf", [
+                "ICICI BANK - CURRENT ACCOUNT STATEMENT (SYNTHETIC DEMO DATA)",
+                "Account holder: Skyline Traders    Account: XXXX9920",
+                "Statement period: 12 months",
+                "Average monthly credits (inflows): INR 12,00,000",
+                "Average monthly balance: INR 1,80,000",
+                "Total annual bank credits (turnover): INR 1,44,00,000",
+                "Total monthly EMI outflow (existing loans): INR 3,20,000",
+                "Average monthly fixed obligations (EMIs + operating fixed costs): INR 11,50,000",
+                "Inflow to outflow ratio: 0.96",
+                "MONTH-WISE SUMMARY (credits / debits / closing balance in INR):",
+                "  Apr-2025: 13,40,000 / 13,90,000 / 1,60,000",
+                "  May-2025: 10,80,000 / 11,50,000 / 1,20,000",
+                "  Jun-2025: 14,20,000 / 13,10,000 / 2,10,000",
+                "  Jul-2025: 9,60,000 / 10,80,000 / 90,000",
+                "  Aug-2025: 12,90,000 / 12,40,000 / 1,80,000",
+                "  Sep-2025: 11,20,000 / 12,10,000 / 1,10,000",
+                "  Oct-2025: 13,80,000 / 13,20,000 / 2,20,000",
+                "  Nov-2025: 10,40,000 / 11,90,000 / 80,000",
+                "  Dec-2025: 14,60,000 / 13,70,000 / 2,40,000",
+                "  Jan-2026: 9,90,000 / 11,20,000 / 70,000",
+                "  Feb-2026: 12,10,000 / 12,00,000 / 1,50,000",
+                "  Mar-2026: 11,10,000 / 12,80,000 / 60,000",
+                "RECURRING EMI DEBITS: Kotak Personal 85,000; HDFC Card min-due 40,000; IIFL Business 1,95,000 (3 EMIs, total 3,20,000/mo)",
+                "FLAGGED / ANOMALOUS TRANSACTIONS OBSERVED:",
+                "  Junglee Rummy (RummyCircle) debits: INR 6,40,000 across 52 txns",
+                "  Dream11 / MPL fantasy gaming debits: INR 2,10,000 across 33 txns",
+                "  Parimatch betting gateway: INR 1,80,000 across 19 txns",
+                "  Frequent large cash withdrawals near month-end (structuring pattern).",
+                "Cheque returns: 4   NACH failures: 2",
+                "Cash flow pattern: volatile, high gambling outflow, thin surplus, EMI stress.",
+            ]),
+            ("itr", "Skyline_ITR.pdf", [
+                "INCOME TAX RETURN - ITR (SYNTHETIC DEMO DATA)",
+                "Assessee: Skyline Traders   AY: 2025-26",
+                "Declared gross annual business income: INR 82,00,000",
+                "Business commencement: registered 15 months ago",
+            ]),
+            ("gst", "Skyline_GST.pdf", [
+                "GST RETURNS SUMMARY GSTR-3B (SYNTHETIC DEMO DATA)",
+                "Legal name: Skyline Traders",
+                "Aggregate annual turnover declared: INR 78,00,000",
+                "Note: banking turnover (1.44 Cr) materially exceeds GST-declared turnover.",
+            ]),
+            ("purchase_bills", "Skyline_Purchase_Bills.pdf", [
+                "PURCHASE INVOICES SUMMARY (SYNTHETIC DEMO DATA)",
+                "Buyer: Skyline Traders   Period: FY 2025-26",
+                "Total purchases: INR 52,00,000 (several cash purchases, weak documentation)",
+                "  INV-P/981 | Assorted distributors | 31,00,000",
+                "  INV-P/1044 | Unregistered vendors (cash) | 21,00,000",
+            ]),
+            ("sales_bills", "Skyline_Sales_Bills.pdf", [
+                "SALES INVOICES SUMMARY (SYNTHETIC DEMO DATA)",
+                "Seller: Skyline Traders   Period: FY 2025-26",
+                "Total sales raised: INR 76,00,000 (mostly retail UPI, high fragmentation)",
+                "  Retail UPI collections | 70,00,000 across 210 txns",
+                "  Counter sales (cash) | 6,00,000",
+            ]),
+        ],
+    }
+    lakshmi = {
+        "reference": "LS-2026-00203", "borrower_name": "Sri Lakshmi Components",
+        "loan_type": "business", "loan_amount": 2500000, "target": "review",
+        "docs": [
+            ("kyc", "Lakshmi_KYC.pdf", [
+                "KYC / BORROWER PROFILE (SYNTHETIC DEMO DATA)",
+                "Entity: Sri Lakshmi Components   Constitution: Partnership",
+                "PAN: AAEFS5566M   GSTIN: 36AAEFS5566M1Z9",
+                "Partners: K. Reddy, V. Reddy - KYC verified", "Address: Balanagar, Hyderabad 500037",
+                "Nature of business: Auto components sub-assembly",
+                "Business commencement: registered 40 months ago",
+            ]),
+            ("cibil", "Lakshmi_CIBIL.pdf", [
+                "CIBIL / TRANSUNION COMMERCIAL CREDIT REPORT (SYNTHETIC DEMO DATA)",
+                "Entity: Sri Lakshmi Components", "CIBIL Score: 705",
+                "Total active loans: 3   Hard enquiries (last 6 months): 3",
+                "Total sanctioned: INR 60,00,000   Total outstanding: INR 41,00,000",
+                "Total overdue amount: INR 0   Worst DPD across accounts: 22 days",
+                "Repayment track record: broadly regular, one instance of 22-day delay.",
+                "TRADELINES:",
+                "  1. Axis Bank | Working Capital | Sanctioned 30,00,000 | Outstanding 22,00,000 | EMI 1,60,000 | DPD 22 | Active",
+                "  2. Tata Capital | Machinery Loan | Sanctioned 20,00,000 | Outstanding 13,00,000 | EMI 95,000 | DPD 0 | Active",
+                "  3. HDFC Bank | Overdraft | Sanctioned 10,00,000 | Outstanding 6,00,000 | EMI 45,000 | DPD 5 | Active",
+            ]),
+            ("bank_statement", "Lakshmi_Bank_Statement.pdf", [
+                "AXIS BANK - CURRENT ACCOUNT STATEMENT (SYNTHETIC DEMO DATA)",
+                "Account holder: Sri Lakshmi Components    Account: XXXX7712",
+                "Statement period: 12 months",
+                "Average monthly credits (inflows): INR 9,40,000",
+                "Average monthly balance: INR 3,10,000",
+                "Total annual bank credits (turnover): INR 1,40,00,000",
+                "Total monthly EMI outflow (existing loans): INR 3,00,000",
+                "Average monthly fixed obligations (EMIs + operating fixed costs): INR 5,45,000",
+                "Inflow to outflow ratio: 1.03",
+                "MONTH-WISE SUMMARY (credits / debits / closing balance in INR):",
+                "  Apr-2025: 9,80,000 / 9,40,000 / 3,20,000",
+                "  May-2025: 8,60,000 / 9,10,000 / 2,70,000",
+                "  Jun-2025: 10,20,000 / 9,60,000 / 3,30,000",
+                "  Jul-2025: 9,10,000 / 9,00,000 / 3,40,000",
+                "  Aug-2025: 8,90,000 / 9,30,000 / 3,00,000",
+                "  Sep-2025: 9,60,000 / 9,20,000 / 3,40,000",
+                "  Oct-2025: 10,10,000 / 9,70,000 / 3,80,000",
+                "  Nov-2025: 8,80,000 / 9,10,000 / 3,50,000",
+                "  Dec-2025: 9,90,000 / 9,40,000 / 4,00,000",
+                "  Jan-2026: 8,70,000 / 9,20,000 / 3,50,000",
+                "  Feb-2026: 9,30,000 / 9,00,000 / 3,80,000",
+                "  Mar-2026: 9,80,000 / 9,60,000 / 4,00,000",
+                "RECURRING EMI DEBITS: Axis WC 1,60,000; Tata Capital 95,000; HDFC OD 45,000 (3 EMIs, total 3,00,000/mo)",
+                "TOP CREDIT SOURCES: Mahindra CIE 58,00,000; Bosch India 41,00,000; assorted 41,00,000",
+                "Cheque returns: 2   NACH failures: 1",
+                "No gambling or betting transactions observed.",
+                "Cash flow pattern: steady but thin surplus; moderate obligation load.",
+            ]),
+            ("itr", "Lakshmi_ITR.pdf", [
+                "INCOME TAX RETURN - ITR (SYNTHETIC DEMO DATA)",
+                "Assessee: Sri Lakshmi Components   AY: 2025-26",
+                "Declared gross annual business income: INR 92,00,000",
+                "Business commencement: registered 40 months ago",
+            ]),
+            ("gst", "Lakshmi_GST.pdf", [
+                "GST RETURNS SUMMARY GSTR-3B (SYNTHETIC DEMO DATA)",
+                "Legal name: Sri Lakshmi Components",
+                "Aggregate annual turnover declared: INR 1,05,00,000",
+                "Note: GST turnover 1.05 Cr vs banking turnover 1.40 Cr (~25% variance).",
+            ]),
+            ("purchase_bills", "Lakshmi_Purchase_Bills.pdf", [
+                "PURCHASE INVOICES SUMMARY (SYNTHETIC DEMO DATA)",
+                "Buyer: Sri Lakshmi Components   Period: FY 2025-26",
+                "Total purchases: INR 62,00,000",
+                "  INV-P/311 | Jindal Steel | 34,00,000",
+                "  INV-P/377 | Fastener suppliers | 16,00,000",
+                "  INV-P/430 | Consumables | 12,00,000",
+            ]),
+            ("sales_bills", "Lakshmi_Sales_Bills.pdf", [
+                "SALES INVOICES SUMMARY (SYNTHETIC DEMO DATA)",
+                "Seller: Sri Lakshmi Components   Period: FY 2025-26",
+                "Total sales raised: INR 1,02,00,000",
+                "  INV-S/540 | Mahindra CIE | 58,00,000",
+                "  INV-S/588 | Bosch India | 41,00,000",
+                "  INV-S/612 | Assorted buyers | 3,00,000",
+            ]),
+        ],
+    }
+    return [nova, skyline, lakshmi]
+
+
+async def _process_seed_app(app_id: str):
+    """Background: run genuine OCR + LLM extraction, then decision + memo for a seeded app."""
+    try:
+        await refresh_extraction(app_id)
+        application = await db.applications.find_one({"id": app_id}, {"_id": 0})
+        if not application:
+            return
+        if application.get("extracted_financials"):
+            ef = application["extracted_financials"]
+            await write_audit(app_id, "Documents Analysed", "Credit Brain",
+                              {"source": "ai", "confidence": ef.get("_confidence")})
+        policy = await get_active_policy()
+        documents = await db.documents.find({"application_id": app_id}, {"_id": 0}).to_list(100)
+        readiness = evaluate_document_readiness(documents, policy)
+        full = compute_full_decision(application, policy)
+        memo = build_detailed_memo(application, policy, full)
+        decision_doc = {
+            "id": str(uuid.uuid4()), "application_id": app_id, **full,
+            "model_decision": full["decision"], "override": None,
+            "required_authority": authority_for_amount(full["recommended_amount"], policy),
+            "memo_text": memo, "memo_source": "template", "readiness": readiness,
+            "created_at": iso(now_utc()),
+        }
+        await db.decisions.replace_one({"application_id": app_id}, decision_doc, upsert=True)
+        status = {"approve": "approved", "review": "review", "reject": "rejected"}.get(full["decision"], "decided")
+        await db.applications.update_one({"id": app_id}, {"$set": {"status": status}})
+        await write_audit(app_id, "Credit Brain Completed", "Credit Brain",
+                          {"pd_score": full["pd_score"], "risk_grade": full["risk_grade"]})
+        await write_audit(app_id, "Policy Evaluated", "Credit Policy Engine",
+                          {"policy_version": full["policy_version"], "overall": full["policy_evaluation"]["overall"]})
+        await write_audit(app_id, "Decision Generated", "Decision Engine",
+                          {"decision": full["decision"], "recommended_amount": full["recommended_amount"],
+                           "roi": full["roi"], "tenure_months": full["tenure_months"], "emi": full["emi"]})
+        await write_audit(app_id, "Credit Memo Generated", "Decision Engine",
+                          {"model_version": full["model_version"], "memo_source": "template"})
+    except Exception as e:
+        logger.warning(f"Seed processing failed for {app_id}: {e}")
+        await db.applications.update_one({"id": app_id}, {"$set": {"status": "pending"}})
+
+
+async def _run_seed_processing(app_ids: list):
+    for app_id in app_ids:
+        await _process_seed_app(app_id)
 
 
 @api_router.post("/demo/seed")
 async def seed_demo(user: dict = Depends(get_current_user)):
+    import asyncio
     created = 0
-    for s in SEED_APPS:
+    refs = []
+    new_app_ids = []
+    for idx, s in enumerate(_seed_portfolio()):
         existing = await db.applications.find_one({"reference": s["reference"]})
         if existing:
             continue
         created += 1
+        refs.append(s["reference"])
         app_id = str(uuid.uuid4())
-        base_dt = now_utc() - timedelta(days=created, minutes=6)
-        app_doc = {
-            "id": app_id,
-            "reference": s["reference"],
-            "borrower_name": s["borrower_name"],
-            "loan_type": s["loan_type"],
-            "loan_amount": s["loan_amount"],
-            "status": "pending",
-            "created_at": iso(base_dt),
-        }
-        await db.applications.insert_one(app_doc)
+        new_app_ids.append(app_id)
+        base_dt = now_utc() - timedelta(minutes=6 + idx)
+        await db.applications.insert_one({
+            "id": app_id, "reference": s["reference"], "borrower_name": s["borrower_name"],
+            "loan_type": s["loan_type"], "loan_amount": s["loan_amount"],
+            "status": "pending", "created_at": iso(base_dt),
+        })
         await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id,
                                        "event": "Application Created", "actor": "System",
-                                       "payload": {"reference": s["reference"]},
-                                       "created_at": iso(base_dt)})
-        for dtype, fname in s["docs"]:
+                                       "payload": {"reference": s["reference"]}, "created_at": iso(base_dt)})
+        for dtype, fname, lines in s["docs"]:
+            doc_id = str(uuid.uuid4())
+            stored_name = f"{doc_id}_{fname}"
+            file_path = UPLOAD_DIR / stored_name
+            content = _seed_render_pdf(lines)
+            with open(file_path, "wb") as out:
+                out.write(content)
             await db.documents.insert_one({
-                "id": str(uuid.uuid4()), "application_id": app_id, "doc_type": dtype,
-                "filename": fname, "file_path": None, "file_size": 240000 + len(fname) * 91,
-                "status": "processed", "uploaded_at": iso(base_dt + timedelta(minutes=1)),
+                "id": doc_id, "application_id": app_id, "doc_type": dtype, "filename": fname,
+                "file_path": str(file_path), "file_size": len(content), "status": "processed",
+                "uploaded_at": iso(base_dt + timedelta(minutes=1)),
             })
-        if s["docs"]:
-            await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id,
-                                           "event": "Documents Uploaded", "actor": "System",
-                                           "payload": {"count": len(s["docs"])},
-                                           "created_at": iso(base_dt + timedelta(minutes=1))})
-        if s["decide"]:
-            application_obj = {"id": app_id, "reference": s["reference"], "borrower_name": s["borrower_name"],
-                               "loan_type": s["loan_type"], "loan_amount": s["loan_amount"]}
-            policy = await get_active_policy()
-            full = compute_full_decision(application_obj, policy)
-            memo = build_detailed_memo(application_obj, policy, full)
-            dec_dt = base_dt + timedelta(minutes=full["tat_minutes"])
-            await db.decisions.insert_one({
-                "id": str(uuid.uuid4()), "application_id": app_id, **full,
-                "model_decision": full["decision"], "override": None,
-                "required_authority": authority_for_amount(full["recommended_amount"], policy),
-                "memo_text": memo, "memo_source": "template", "created_at": iso(dec_dt),
-            })
-            new_status = {"approve": "approved", "review": "review", "reject": "rejected"}.get(full["decision"], "decided")
-            await db.applications.update_one({"id": app_id}, {"$set": {"status": new_status}})
-            for ev, actor, pl in [
-                ("Credit Brain Completed", "Credit Brain", {"pd_score": full["pd_score"], "risk_grade": full["risk_grade"]}),
-                ("Policy Evaluated", "Credit Policy Engine", {"policy_version": full["policy_version"], "overall": full["policy_evaluation"]["overall"]}),
-                ("Decision Generated", "Decision Engine", {"decision": full["decision"], "recommended_amount": full["recommended_amount"], "roi": full["roi"], "tenure_months": full["tenure_months"], "emi": full["emi"]}),
-                ("Credit Memo Generated", "Decision Engine", {"model_version": full["model_version"]}),
-            ]:
-                await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id, "event": ev,
-                                               "actor": actor, "payload": pl, "created_at": iso(dec_dt)})
-    return {"created": created, "message": "Sample portfolio loaded" if created else "Sample portfolio already present"}
+        await db.audit_log.insert_one({"id": str(uuid.uuid4()), "application_id": app_id,
+                                       "event": "Documents Uploaded", "actor": "System",
+                                       "payload": {"count": len(s["docs"]),
+                                                   "types": [d[0] for d in s["docs"]]},
+                                       "created_at": iso(base_dt + timedelta(minutes=1))})
+    if new_app_ids:
+        asyncio.create_task(_run_seed_processing(new_app_ids))
+    return {"created": created, "refs": refs, "processing": len(new_app_ids),
+            "message": "Sample portfolio loading — AI is analysing the documents" if created
+                       else "Sample portfolio already present"}
 
 
 @api_router.get("/")
