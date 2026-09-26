@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend-only test of the reworked 'Loan Eligibility Calculation' waterfall on the Decision tab for RiskRadar Strong Pvt Ltd. All 6 expandable step rows render, expand/collapse works, binding highlight + chip 'Binding: Policy maximum' shown, flow summary at bottom shows Requested / Ceilings / Binding / Recommended / decision + EMI/FOIR/interest line with real numbers, no React hook errors, Decision Trace tab still works.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "MINOR / DOC ONLY: review_request mentioned step testids end with a trailing dash (e.g. 'wf-step-policy-maximum-'), but actual DOM testids are without trailing dash (e.g. 'wf-step-policy-maximum'). Not a functional bug – just update the spec/prefix documentation for future test agents. Behaviour verified with prefix match."
+  ],
+  "critical_code_review_comments": [
+    "openStep useState is correctly declared at top of DecisionTab (before early returns) — no hook-order violation observed.",
+    "Detail panel testids (wf-detail-*) are only rendered when expanded, which is fine but callers should query by prefix or after click.",
+    "Formula/Calculation/Inputs come from backend eligibility_waterfall entries – frontend gracefully renders whatever backend provides."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "test_credentials": "Admin: kiranmaadamshetti@gmail.com / LendSprint@2026 (worked)",
+  "seed_data_creation": "None (used existing RiskRadar Strong Pvt Ltd application LS-2026-00154 with existing REJECT decision, binding=Policy maximum, recommended ₹50.00 L)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Decision tab waterfall verified: testids are eligibility-waterfall, binding-constraint, wf-step-{slug} (NO trailing dash), wf-detail-{slug} (rendered only when expanded), eligibility-flow-summary. Binding row for Policy maximum shows amber BINDING chip. Header chip reads 'Binding: Policy maximum'. Flow summary shows: Requested ₹80.00 L → Ceilings computed → Binding: Policy maximum ₹50.00 L → Recommended ₹50.00 L → REJECT + 'At 20.00% for 48 months → EMI ₹1,52,152 · post-loan FOIR 19.6% · total interest ₹23.03 L · total repayment ₹73.03 L'. Policy maximum detail formula: 'min(product absolute cap, annual turnover × turnover multiple)'; calculation: 'min(₹50.00 L, ₹215.00 L × 0.35) = min(₹50.00 L, ₹75.25 L) = ₹50.00 L'. No hook error / blank screen. Cash Flow, Recommended Loan Structure, Override button, Trace tab all render.",
+  "rca of the issue": "No bugs found."
+}

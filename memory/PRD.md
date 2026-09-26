@@ -73,6 +73,11 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## Loan Eligibility Calculation makeover (2026-06-18)
+Shipped + tested (iteration_10: frontend 100%, backend curl-verified, no bugs):
+- ✅ Each eligibility_waterfall step now carries kind/binding/formula/calculation/inputs; decision exposes top-level binding_constraint. compute_full_decision builds the enriched steps (Requested, Policy maximum, Cash-flow, Collateral, Final eligible, Recommended) with real-number calculations.
+- ✅ Decision-tab UI reworked into an expandable, fully-explained flow: click any step to reveal its formula, calculation with numbers and input chips; binding constraint highlighted (amber 'binding' tag + 'Binding: X' header chip); bottom 'How the number was reached' flow summary (Requested → Ceilings → Binding → Recommended → decision) with EMI/FOIR/interest/repayment line. Testids: eligibility-waterfall, binding-constraint, wf-step-{slug} (no trailing dash), wf-detail-{slug}, eligibility-flow-summary. openStep useState declared before early returns (no hook-order issue).
+
 ## CIBIL Classification Rules (2026-06-18)
 - ✅ `classify_cibil(score, max_dpd)` rates every bureau profile; DPD is the dominant gate: max DPD ≥90 → **Danger / Bad Profile** (critical); 7 < DPD < 90 → **Not a Good Customer** (review); DPD ≤7 (or none) → score ≥750 **Excellent**, ≥650 **Good**, else **Average**. Tolerance constant CIBIL_DPD_TOLERANCE=7. Exposed as credit_brain.cibil_rating and shown as a coloured badge + reason line in the CIBIL section (data-testid cibil-rating). Verified: 771/0d=Excellent, 648/62d=Not a Good Customer, 760/120d=Danger, 640/0d=Average.
 
