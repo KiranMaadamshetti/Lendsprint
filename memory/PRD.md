@@ -73,6 +73,13 @@ Shipped + tested (46/46 backend + full frontend E2E):
 - P1: Remaining Phase-1 spec items — per-app What-If simulator, Why-Not view, Decision Trace, Credit Committee dedicated view, PD vs Data Confidence, contradiction detection, missing-evidence readiness, decision-quality feedback, Policy Replay, Policy version comparison, Decision Queue.
 - P2: Editable extracted financials with change audit; Financials tab; Credit Policy & Credit Brain analytics dashboards.
 
+## Deep CIBIL + Bank-Statement Analysis (2026-06-18)
+Shipped + tested (iteration_9: frontend 100%, backend curl-verified, zero issues):
+- ✅ On upload, Mistral OCR + GPT-5.6-sol now also extract a full **CIBIL report** (score, active loans, sanctioned/outstanding/overdue, worst DPD, 6-month enquiries, per-account tradelines table with lender/type/sanctioned/outstanding/EMI/DPD/status) and **bank-statement analysis** (avg balance, EMI count + list of instalments/beneficiaries, top credit sources & debit destinations, cash-flow pattern, inflow/outflow ratio).
+- ✅ **Anomaly detection**: flags online rummy/gambling, fantasy gaming, betting, large cash withdrawals, unexplained deposits, payment returns — with type/description/amount/severity. High-severity anomalies + DPD≥30/overdue become risk signals; any critical risk signal downgrades approve→review (Grade C rejects).
+- ✅ Two new Credit Brain tab sections: "Credit Bureau (CIBIL) Analysis" (score chip + tiles + tradelines table) and "Bank Statement Analysis" (tiles, EMI list, credit/debit sources, red-flag anomalies). Absent (correctly) for estimate-mode/docs-less apps.
+- Stored in application.extracted_financials.{cibil_report, banking_analysis}; passed through credit_brain output. Verified: strong app CIBIL 771/0 anomalies; risky app CIBIL 648, DPD 62, ₹6.4L gambling flagged → reject Grade C PD 0.43. Richer synthetic demo docs in /app/synthetic_docs (bank/cibil/gst + bad_bank/bad_cibil/bad_gst); regenerate with python /app/gen_docs.py and /app/gen_bad.py.
+
 ## Mistral OCR + GPT-5.6 upgrade (2026-06-18)
 - Document extraction now uses **Mistral OCR** (`mistral-ocr-latest`, POST https://api.mistral.ai/v1/ocr, async httpx, base64 data URL) as the primary text/markdown extractor — handles scanned PDFs & images. `pypdf` retained only as a silent fallback (extract_document_text → mistral_ocr_text → extract_pdf_text). Requires MISTRAL_API_KEY in backend/.env (server-side only).
 - All LLM analysis calls (structured financial extraction, credit memo, Ask-Brain assistant) upgraded from gpt-5.4 → **gpt-5.6-sol** via the ANALYSIS_MODEL constant. Model constants centralised: ANALYSIS_MODEL, OCR_MODEL.
