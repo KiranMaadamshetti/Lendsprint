@@ -6,7 +6,7 @@ LendSprint AI takes a borrower application from raw document intake to an audita
 
 > Borrower application → Upload financial documents → **Mistral OCR** text/markdown → **GPT-5.6-sol** structured extraction (CIBIL, banking, GST, anomalies) → Credit Brain analysis → Configurable Credit Policy evaluation → Loan structuring (eligibility waterfall, ROI/tenure/EMI) → Explainable decision & reason codes → AI credit memo → Complete audit trail.
 
-> ⚠️ This is **not** a mock/demo engine. There is no hardcoded borrower table driving outcomes. Every decision is derived from data extracted from the documents you upload.
+> App link : https://ai-lending-hub-4.emergent.host/login |User ID:kiranmaadamshetti@gmail.com |Password :LendSprint@2026
 
 ---
 
