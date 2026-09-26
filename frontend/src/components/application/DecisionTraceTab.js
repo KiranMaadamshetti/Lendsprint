@@ -48,6 +48,7 @@ export function DecisionTraceTab({ application, documents = [], decision, onRun 
 
   const confVals = Object.values(ev).map((e) => e.confidence).filter((c) => c != null);
   const avgConf = confVals.length ? Math.round((confVals.reduce((a, b) => a + b, 0) / confVals.length) * 100) : null;
+  const contradictions = brain.contradictions || [];
 
   const gradeStatus = decision.risk_grade === "A" ? "ok" : decision.risk_grade === "B" ? "ok" : "warn";
   const policyStatus = pe.overall === "PASS" ? "ok" : pe.overall === "REVIEW" ? "warn" : "bad";
@@ -61,8 +62,8 @@ export function DecisionTraceTab({ application, documents = [], decision, onRun 
     },
     {
       id: "extraction", label: "Extraction", icon: ScanLine,
-      status: avgConf == null ? "idle" : avgConf >= 92 ? "ok" : "warn",
-      summary: avgConf != null ? `${avgConf}% confidence` : "—",
+      status: contradictions.length ? (contradictions.some((c) => c.severity === "critical") ? "bad" : "warn") : (avgConf == null ? "idle" : avgConf >= 92 ? "ok" : "warn"),
+      summary: contradictions.length ? `${contradictions.length} contradiction${contradictions.length > 1 ? "s" : ""}` : (avgConf != null ? `${avgConf}% confidence` : "—"),
     },
     {
       id: "brain", label: "Credit Brain", icon: Brain,
@@ -167,6 +168,18 @@ export function DecisionTraceTab({ application, documents = [], decision, onRun 
               <Row k="Cheque bounces" v={f.cheque_bounces} />
               <Row k="NACH bounces" v={f.nach_bounces} />
             </div>
+            {contradictions.length > 0 && (
+              <div className="mt-4">
+                <div className="text-[12px] font-semibold text-red-600">Contradictions detected</div>
+                <ul className="mt-1.5 space-y-1">
+                  {contradictions.map((c) => (
+                    <li key={c.code} className="text-[12px] text-muted-foreground">
+                      • <span className="font-medium text-foreground">{c.label}</span> — {c.variance_pct}% variance ({c.sources.join(" vs ")})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 

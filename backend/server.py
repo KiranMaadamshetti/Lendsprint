@@ -328,6 +328,7 @@ DEFAULT_POLICY = {
         {"role": "admin", "label": "Senior Credit / Admin", "min": 0, "max": 1000000000},
     ],
     "required_documents": ["Bank Statement", "ITR", "GST Returns", "KYC", "Existing Loan Statement"],
+    "mandatory_documents": ["Bank Statement", "ITR", "GST Returns"],
     "conditions": [
         "Completion of KYC verification for borrower and promoters.",
         "Verification of latest 6-month bank statement prior to disbursement.",
@@ -488,6 +489,66 @@ def build_evidence(f: dict, seed: int) -> dict:
     }
 
 
+REQUIRED_DOC_MAP = {"Bank Statement": "bank_statement", "ITR": "itr", "GST Returns": "gst",
+                    "GST": "gst", "Salary Slip": "salary_slip"}
+
+
+def build_contradictions(banking_turnover: int, gst_turnover: int, itr_income: int, banking_income_annual: int) -> list:
+    """Cross-source data-integrity checks (mock intelligence layer)."""
+    out = []
+
+    def variance(a, b):
+        m = max(a, b, 1)
+        return abs(a - b) / m
+
+    v1 = variance(banking_turnover, gst_turnover)
+    if v1 >= 0.20:
+        out.append({
+            "code": "CONTRA-TURNOVER",
+            "label": "GST turnover vs banking turnover mismatch",
+            "detail": f"GST-declared turnover ₹{lakh(gst_turnover)} L differs from banking-derived turnover ₹{lakh(banking_turnover)} L by {round(v1*100)}%.",
+            "severity": "critical" if v1 >= 0.35 else "review",
+            "variance_pct": round(v1 * 100, 1),
+            "sources": ["GST Returns", "Bank Statement"],
+            "values": [{"label": "GST turnover", "value": f"₹{lakh(gst_turnover)} L"},
+                       {"label": "Banking turnover", "value": f"₹{lakh(banking_turnover)} L"}],
+        })
+    v2 = variance(banking_income_annual, itr_income)
+    if v2 >= 0.20:
+        out.append({
+            "code": "CONTRA-INCOME",
+            "label": "ITR income vs banking credits mismatch",
+            "detail": f"ITR-declared annual income ₹{lakh(itr_income)} L differs from banking annual credits ₹{lakh(banking_income_annual)} L by {round(v2*100)}%.",
+            "severity": "critical" if v2 >= 0.40 else "review",
+            "variance_pct": round(v2 * 100, 1),
+            "sources": ["ITR", "Bank Statement"],
+            "values": [{"label": "ITR income", "value": f"₹{lakh(itr_income)} L"},
+                       {"label": "Banking credits", "value": f"₹{lakh(banking_income_annual)} L"}],
+        })
+    return out
+
+
+def evaluate_document_readiness(documents: list, policy: dict) -> dict:
+    """Which required documents are present; blocks the decision when a mandatory one is missing."""
+    present = {d.get("doc_type") for d in documents}
+    required = policy.get("required_documents", [])
+    mandatory = policy.get("mandatory_documents", ["Bank Statement", "ITR", "GST Returns"])
+    checklist = []
+    for label in required:
+        dtype = REQUIRED_DOC_MAP.get(label)
+        is_mand = label in mandatory
+        if dtype is None:
+            checklist.append({"label": label, "present": True, "verifiable": False, "mandatory": is_mand})
+        else:
+            checklist.append({"label": label, "present": dtype in present, "verifiable": True,
+                              "mandatory": is_mand, "doc_type": dtype})
+    missing = [c["label"] for c in checklist if c["mandatory"] and not c["present"]]
+    missing_optional = [c["label"] for c in checklist if not c["mandatory"] and not c["present"]]
+    return {"checklist": checklist, "missing": missing, "missing_optional": missing_optional,
+            "ready": len(missing) == 0, "required_count": len(required),
+            "present_count": len([c for c in checklist if c["present"]])}
+
+
 def credit_brain(application: dict) -> dict:
     """Derive structured financial evidence + signals (mock intelligence layer)."""
     borrower = application["borrower_name"]
@@ -511,6 +572,14 @@ def credit_brain(application: dict) -> dict:
     dscr = round(net / existing_emi, 2) if existing_emi else 2.5
     foir_before = round(obligations / income, 3) if income else 0
     banking_months = 12
+    banking_turnover = annual_credits
+    _gst_ratio = {"arvind engineering pvt ltd": 0.97, "sri lakshmi components": 0.72,
+                  "bluepeak traders": 0.58}.get(key, round(1 - (seed % 30) / 100.0, 2))
+    gst_turnover = int(round(banking_turnover * _gst_ratio))
+    _itr_ratio = {"arvind engineering pvt ltd": 0.96, "sri lakshmi components": 0.81,
+                  "bluepeak traders": 0.67}.get(key, round(1 - ((seed >> 5) % 26) / 100.0, 2))
+    itr_declared_income = int(round(annual_credits * _itr_ratio))
+    contradictions = build_contradictions(banking_turnover, gst_turnover, itr_declared_income, annual_credits)
 
     # monthly cash-flow trend (last 6 months)
     months = ["Mar", "Apr", "May", "Jun", "Jul", "Aug"]
@@ -544,10 +613,13 @@ def credit_brain(application: dict) -> dict:
             "dscr": dscr, "banking_history_months": banking_months, "cheque_bounces": cheque_bounces,
             "nach_bounces": nach_bounces, "business_vintage_months": vintage, "cibil": cibil,
             "annual_turnover": revenue, "industry": prof.get("industry", "Manufacturing"),
+            "gst_turnover": gst_turnover, "banking_turnover": banking_turnover,
+            "itr_declared_income": itr_declared_income,
         },
         "cash_flow_trend": trend,
         "positive_signals": positive,
         "risk_signals": risk,
+        "contradictions": contradictions,
         "evidence": build_evidence({
             "revenue": revenue, "annual_credits": annual_credits, "avg_monthly_credits": income,
             "avg_monthly_balance": avg_balance, "existing_emi": existing_emi,
@@ -641,6 +713,9 @@ def compute_full_decision(application: dict, policy: dict, force_known: bool = T
         decision = "review"
     else:
         decision = "approve"
+    crit_contra = [c for c in brain.get("contradictions", []) if c["severity"] == "critical"]
+    if crit_contra and decision == "approve":
+        decision = "review"
     if key in KNOWN_PROFILES and force_known:
         decision = KNOWN_PROFILES[key]["decision"]
 
@@ -1020,14 +1095,19 @@ async def get_credit_brain(app_id: str, user: dict = Depends(get_current_user)):
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
     decision = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
+    documents = await db.documents.find({"application_id": app_id}, {"_id": 0}).to_list(100)
+    policy = await get_active_policy()
+    readiness = evaluate_document_readiness(documents, policy)
     if decision and decision.get("credit_brain"):
         cb = decision["credit_brain"]
+        seed = _seed_int(application["borrower_name"], application["loan_amount"])
         if "evidence" not in cb and cb.get("financials"):
-            seed = _seed_int(application["borrower_name"], application["loan_amount"])
             cb["evidence"] = build_evidence(cb["financials"], seed)
-        return {"application": application, "credit_brain": cb, "computed": False}
+        if "contradictions" not in cb:
+            cb["contradictions"] = credit_brain(application).get("contradictions", [])
+        return {"application": application, "credit_brain": cb, "readiness": readiness, "computed": False}
     brain = credit_brain(application)
-    return {"application": application, "credit_brain": brain, "computed": True}
+    return {"application": application, "credit_brain": brain, "readiness": readiness, "computed": True}
 
 
 @api_router.get("/applications/{app_id}/policy-evaluation")
@@ -1049,9 +1129,13 @@ async def get_application(app_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Application not found")
     documents = await db.documents.find({"application_id": app_id}, {"_id": 0}).sort("uploaded_at", 1).to_list(100)
     decision = await db.decisions.find_one({"application_id": app_id}, {"_id": 0})
-    if decision and decision.get("credit_brain") and "evidence" not in decision["credit_brain"] and decision["credit_brain"].get("financials"):
+    if decision and decision.get("credit_brain") and decision["credit_brain"].get("financials"):
+        cb = decision["credit_brain"]
         seed = _seed_int(application["borrower_name"], application["loan_amount"])
-        decision["credit_brain"]["evidence"] = build_evidence(decision["credit_brain"]["financials"], seed)
+        if "evidence" not in cb:
+            cb["evidence"] = build_evidence(cb["financials"], seed)
+        if "contradictions" not in cb:
+            cb["contradictions"] = credit_brain(application).get("contradictions", [])
     return {"application": application, "documents": documents, "decision": decision}
 
 
@@ -1149,8 +1233,15 @@ async def run_decision(app_id: str, options: DecisionOptions = DecisionOptions()
     if not documents:
         raise HTTPException(status_code=400, detail="Upload at least one document before running the decision")
 
-    result = compute_decision(application["borrower_name"], application["loan_type"], application["loan_amount"])
     policy = await get_active_policy()
+    readiness = evaluate_document_readiness(documents, policy)
+    if not readiness["ready"]:
+        await write_audit(app_id, "Decision Blocked", user.get("name", "Analyst"),
+                          {"reason": "Missing mandatory documents", "missing": readiness["missing"]})
+        raise HTTPException(status_code=400,
+                            detail=f"Decision blocked — missing mandatory document(s): {', '.join(readiness['missing'])}. Upload and classify them to proceed.")
+
+    result = compute_decision(application["borrower_name"], application["loan_type"], application["loan_amount"])
     full = compute_full_decision(application, policy)
     detailed = build_detailed_memo(application, policy, full)
 
@@ -1170,6 +1261,7 @@ async def run_decision(app_id: str, options: DecisionOptions = DecisionOptions()
         "override": None,
         "memo_text": memo_text,
         "memo_source": memo_source,
+        "readiness": readiness,
         "created_at": created,
     }
     await db.decisions.replace_one({"application_id": app_id}, decision_doc, upsert=True)

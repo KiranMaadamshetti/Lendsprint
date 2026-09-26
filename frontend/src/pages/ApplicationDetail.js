@@ -53,6 +53,8 @@ export default function ApplicationDetail() {
   const [running, setRunning] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [pending, setPending] = useState([]);
+  const [docDialogOpen, setDocDialogOpen] = useState(false);
   const [useAi, setUseAi] = useState(false);
   const { user } = useAuth();
   const [authority, setAuthority] = useState(null);
@@ -153,10 +155,7 @@ export default function ApplicationDetail() {
     }
   };
 
-  const handleUpload = async (fileList) => {
-    const items = Array.from(fileList)
-      .filter((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
-      .map((f) => ({ file: f, docType: "bank_statement" }));
+  const handleUpload = async (items) => {
     if (!items.length) return toast.error("Only PDF files are allowed");
     setUploading(true);
     try {
@@ -168,6 +167,21 @@ export default function ApplicationDetail() {
     } finally {
       setUploading(false);
     }
+  };
+
+  const stagePendingFiles = (fileList) => {
+    const items = Array.from(fileList)
+      .filter((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))
+      .map((f, i) => ({ file: f, docType: "bank_statement", id: `${f.name}-${f.size}-${i}-${Math.random()}` }));
+    if (!items.length) return toast.error("Only PDF files are allowed");
+    setPending(items);
+    setDocDialogOpen(true);
+  };
+
+  const confirmUpload = async () => {
+    setDocDialogOpen(false);
+    await handleUpload(pending.map((p) => ({ file: p.file, docType: p.docType })));
+    setPending([]);
   };
 
   const handleDelete = async (docId) => {
@@ -397,7 +411,7 @@ export default function ApplicationDetail() {
               <Button size="sm" variant="outline" onClick={() => fileInput.current?.click()} disabled={uploading} data-testid="add-documents-btn">
                 {uploading ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />Uploading…</> : <><Plus className="mr-1.5 h-4 w-4" strokeWidth={2} />Add documents</>}
               </Button>
-              <input ref={fileInput} type="file" accept="application/pdf" multiple className="hidden" data-testid="detail-file-input" onChange={(e) => { handleUpload(e.target.files); e.target.value = ""; }} />
+              <input ref={fileInput} type="file" accept="application/pdf" multiple className="hidden" data-testid="detail-file-input" onChange={(e) => { stagePendingFiles(e.target.files); e.target.value = ""; }} />
             </div>
             {documents.length === 0 ? (
               <div className="flex flex-col items-center py-14 text-center">
@@ -524,6 +538,41 @@ export default function ApplicationDetail() {
             <Button variant="outline" onClick={() => setOvOpen(false)}>Cancel</Button>
             <Button onClick={submitOverride} disabled={ovSaving} data-testid="override-submit-btn">
               {ovSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : "Apply override"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Document type classification dialog */}
+      <Dialog open={docDialogOpen} onOpenChange={(o) => { if (!o) { setDocDialogOpen(false); setPending([]); } }}>
+        <DialogContent className="sm:max-w-lg" data-testid="doc-type-dialog">
+          <DialogHeader>
+            <DialogTitle>Classify documents</DialogTitle>
+            <DialogDescription>
+              Assign a type to each file. Bank Statement, ITR and GST Returns are mandatory before a decision can run.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto thin-scroll py-1">
+            {pending.map((p) => (
+              <div key={p.id} className="flex items-center gap-3 rounded-md border border-border bg-secondary/40 px-3 py-2">
+                <FileText className="h-4 w-4 shrink-0 text-accent-foreground" strokeWidth={1.8} />
+                <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{p.file.name}</div>
+                <Select value={p.docType} onValueChange={(v) => setPending((arr) => arr.map((x) => (x.id === p.id ? { ...x, docType: v } : x)))}>
+                  <SelectTrigger className="h-8 w-[150px] text-[12px]" data-testid={`doc-type-select-${p.id}`}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bank_statement">Bank Statement</SelectItem>
+                    <SelectItem value="itr">ITR</SelectItem>
+                    <SelectItem value="gst">GST</SelectItem>
+                    <SelectItem value="salary_slip">Salary Slip</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDocDialogOpen(false); setPending([]); }}>Cancel</Button>
+            <Button onClick={confirmUpload} disabled={uploading} data-testid="doc-type-upload-btn">
+              {uploading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Uploading…</> : `Upload ${pending.length} file${pending.length > 1 ? "s" : ""}`}
             </Button>
           </DialogFooter>
         </DialogContent>

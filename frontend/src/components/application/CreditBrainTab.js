@@ -3,10 +3,36 @@ import { toast } from "sonner";
 import { getCreditBrain, apiErrorMessage } from "@/lib/api";
 import { formatINR, formatLakh } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TrendingUp, TrendingDown, ShieldCheck, AlertTriangle, Brain } from "lucide-react";
+import { TrendingUp, TrendingDown, ShieldCheck, AlertTriangle, Brain, GitCompareArrows, FileCheck2, FileX2, CheckCircle2 } from "lucide-react";
 import { EvidenceMetric, EvidenceSheet } from "@/components/application/EvidencePanel";
 
 const SEV_DOT = { critical: "bg-red-500", review: "bg-amber-500", warning: "bg-amber-500", info: "bg-emerald-500" };
+const CONTRA_STYLE = {
+  critical: { border: "border-red-200", bg: "bg-red-50", text: "text-red-700", chip: "bg-red-100 text-red-700" },
+  review: { border: "border-amber-200", bg: "bg-amber-50", text: "text-amber-700", chip: "bg-amber-100 text-amber-700" },
+};
+
+function Contradiction({ c }) {
+  const st = CONTRA_STYLE[c.severity] || CONTRA_STYLE.review;
+  return (
+    <div className={`rounded-md border ${st.border} ${st.bg} px-3 py-2.5`} data-testid={`contradiction-${c.code}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className={`text-[13px] font-semibold ${st.text}`}>{c.label}</div>
+        <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${st.chip}`}>{c.severity} · {c.variance_pct}%</span>
+      </div>
+      <div className="mt-1 text-[12px] text-foreground/80">{c.detail}</div>
+      <div className="mt-2 flex flex-wrap gap-3">
+        {c.values.map((v, i) => (
+          <div key={i} className="rounded border border-border bg-card px-2 py-1">
+            <div className="label-eyebrow">{v.label}</div>
+            <div className="tnum text-[12px] font-medium text-foreground">{v.value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 text-[11px] text-muted-foreground">Sources: {c.sources.join(" · ")}</div>
+    </div>
+  );
+}
 
 function Signal({ s, positive }) {
   return (
@@ -24,12 +50,13 @@ function Signal({ s, positive }) {
 
 export function CreditBrainTab({ applicationId }) {
   const [brain, setBrain] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   const [loading, setLoading] = useState(true);
   const [evItem, setEvItem] = useState(null);
 
   useEffect(() => {
     getCreditBrain(applicationId)
-      .then((d) => setBrain(d.credit_brain))
+      .then((d) => { setBrain(d.credit_brain); setReadiness(d.readiness); })
       .catch((e) => toast.error(apiErrorMessage(e)))
       .finally(() => setLoading(false));
   }, [applicationId]);
@@ -39,6 +66,7 @@ export function CreditBrainTab({ applicationId }) {
 
   const f = brain.financials;
   const ev = brain.evidence || {};
+  const contradictions = brain.contradictions || [];
   const maxTrend = Math.max(...brain.cash_flow_trend.map((t) => t.value), 1);
 
   return (
@@ -63,6 +91,62 @@ export function CreditBrainTab({ applicationId }) {
           <EvidenceMetric label="CIBIL" value={f.cibil} evidence={ev.cibil} onOpen={setEvItem} />
           <EvidenceMetric label="Cheque Bounces" value={f.cheque_bounces} evidence={ev.cheque_bounces} onOpen={setEvItem} />
           <EvidenceMetric label="NACH Bounces" value={f.nach_bounces} evidence={ev.nach_bounces} onOpen={setEvItem} />
+        </div>
+      </div>
+
+      {readiness && (
+        <div className="rounded-lg border border-border bg-card p-5" data-testid="doc-readiness">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {readiness.ready
+                ? <FileCheck2 className="h-4 w-4 text-emerald-600" strokeWidth={1.8} />
+                : <FileX2 className="h-4 w-4 text-red-600" strokeWidth={1.8} />}
+              <h3 className="text-[14px] font-semibold text-foreground">Document Readiness</h3>
+            </div>
+            <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${readiness.ready ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`} data-testid="readiness-status">
+              {readiness.ready ? "Ready to decide" : "Decision blocked"}
+            </span>
+          </div>
+          {!readiness.ready && (
+            <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+              Missing mandatory document(s): <span className="font-semibold">{readiness.missing.join(", ")}</span>. The decision engine is blocked until these are uploaded and classified.
+            </div>
+          )}
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {readiness.checklist.map((c) => (
+              <div key={c.label} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                <div className="flex items-center gap-2">
+                  {c.present
+                    ? <CheckCircle2 className="h-4 w-4 text-emerald-600" strokeWidth={1.8} />
+                    : <AlertTriangle className="h-4 w-4 text-red-500" strokeWidth={1.8} />}
+                  <span className="text-[13px] text-foreground">{c.label}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {c.mandatory && <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Mandatory</span>}
+                  {!c.verifiable && <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Attested</span>}
+                  <span className={`text-[12px] font-medium ${c.present ? "text-emerald-700" : "text-red-600"}`}>{c.present ? "Present" : "Missing"}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-card p-5" data-testid="contradictions-panel">
+        <div className="flex items-center gap-2">
+          <GitCompareArrows className="h-4 w-4 text-accent-foreground" strokeWidth={1.8} />
+          <h3 className="text-[14px] font-semibold text-foreground">Contradictions & Data Integrity</h3>
+        </div>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">Cross-source checks comparing figures across GST, ITR and banking documents.</p>
+        <div className="mt-3 space-y-2">
+          {contradictions.length ? (
+            contradictions.map((c) => <Contradiction key={c.code} c={c} />)
+          ) : (
+            <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5" data-testid="no-contradictions">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" strokeWidth={1.8} />
+              <span className="text-[13px] text-emerald-800">No material contradictions detected across GST, ITR and banking sources.</span>
+            </div>
+          )}
         </div>
       </div>
 
