@@ -328,7 +328,7 @@ DEFAULT_POLICY = {
         {"role": "admin", "label": "Senior Credit / Admin", "min": 0, "max": 1000000000},
     ],
     "required_documents": ["Bank Statement", "ITR", "GST Returns", "KYC", "Existing Loan Statement"],
-    "mandatory_documents": ["Bank Statement"],
+    "mandatory_documents": [],
     "conditions": [
         "Completion of KYC verification for borrower and promoters.",
         "Verification of latest 6-month bank statement prior to disbursement.",
@@ -536,7 +536,7 @@ def evaluate_document_readiness(documents: list, policy: dict) -> dict:
     """Which required documents are present; blocks the decision when a mandatory one is missing."""
     present = {d.get("doc_type") for d in documents}
     required = policy.get("required_documents", [])
-    mandatory = policy.get("mandatory_documents", ["Bank Statement"])
+    mandatory = policy.get("mandatory_documents", [])
     checklist = []
     for label in required:
         dtype = REQUIRED_DOC_MAP.get(label)
